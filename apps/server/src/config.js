@@ -62,6 +62,14 @@ export const config = {
     token: process.env.HRMS_PROVISIONING_TOKEN || "",
     organizationId: process.env.HRMS_PROVISIONING_ORGANIZATION_ID || "",
   },
+  ai: {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+  },
+  hrms: {
+    agentUrl: String(process.env.HRMS_AGENT_URL || "").replace(/\/+$/, ""),
+    agentToken: process.env.HRMS_AGENT_TOKEN || "",
+  },
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY,
     privateKey: process.env.VAPID_PRIVATE_KEY,

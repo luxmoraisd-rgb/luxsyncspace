@@ -14,6 +14,7 @@ import { config } from "./config.js";
 import { authRouter } from "./routes/auth.js";
 import { workspaceRouter } from "./routes/workspace.js";
 import { provisioningRouter } from "./routes/provisioning.js";
+import { adminAgentRouter } from "./routes/adminAgent.js";
 import { startEventReminderScheduler } from "./services/eventReminders.js";
 import { sql } from "./db/client.js";
 import { cached } from "./services/cache.js";
@@ -58,6 +59,7 @@ app.get("/api/health", (_req, res) => res.json({
 }));
 app.use("/api/provisioning", provisioningRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/admin/agent", adminAgentRouter);
 app.use("/api", workspaceRouter);
 
 io.use(async (socket, next) => {

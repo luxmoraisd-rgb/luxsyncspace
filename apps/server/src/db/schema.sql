@@ -134,6 +134,27 @@ CREATE TABLE IF NOT EXISTS announcements (
 
 CREATE INDEX IF NOT EXISTS idx_announcements_org_published ON announcements(organization_id, published_at DESC);
 
+CREATE TABLE IF NOT EXISTS admin_agent_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  command TEXT NOT NULL,
+  action TEXT NOT NULL,
+  arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
+  summary TEXT NOT NULL,
+  risk TEXT NOT NULL DEFAULT 'low' CHECK (risk IN ('low','medium','high')),
+  requires_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','running','completed','failed','cancelled')),
+  result JSONB,
+  error TEXT,
+  planner TEXT NOT NULL DEFAULT 'built-in',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_org_created
+  ON admin_agent_tasks(organization_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS channel_members (
   channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

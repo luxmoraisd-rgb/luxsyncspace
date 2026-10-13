@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MessagesSquare, MoreVertical, Paperclip, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldAlert, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Bot, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MessagesSquare, MoreVertical, Paperclip, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldAlert, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
+import { AdminAgent } from "../components/AdminAgent";
 
 const emptyInvite = () => ({
   fullName: "",
@@ -242,6 +243,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           {canInvite && <button className={tab === "invite" ? "active" : ""} onClick={() => setTab("invite")}><Send size={18} /> Invite employees</button>}
           {isAdministrator && <button className={tab === "password-resets" ? "active" : ""} onClick={() => setTab("password-resets")}><KeyRound size={18} /> Password resets</button>}
           {isAdministrator && <button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><LifeBuoy size={18} /> Support requests</button>}
+          {isAdministrator && <button className={tab === "ai-agent" ? "active" : ""} onClick={() => setTab("ai-agent")}><Bot size={18} /> AI agent</button>}
           {isAdministrator && <button className={tab === "chat-history" ? "active" : ""} onClick={() => setTab("chat-history")}><MessagesSquare size={18} /> Chat history</button>}
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
@@ -305,6 +307,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
             </div>
           </>}
           {tab === "chat-history" && isAdministrator && <ChatHistoryAdmin onToast={onToast} />}
+          {tab === "ai-agent" && isAdministrator && <AdminAgent onToast={onToast} />}
           {tab === "app" && <>
             <header className="settings-section-head"><div><h2>App & notifications</h2><p>Install LuxSyncspace and choose how you receive new-message alerts.</p></div></header>
             <div className="app-settings-list">

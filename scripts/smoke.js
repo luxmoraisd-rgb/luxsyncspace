@@ -1,5 +1,8 @@
 import "dotenv/config";
 import "../apps/server/src/index.js";
+import jwt from "jsonwebtoken";
+import { sql } from "../apps/server/src/db/client.js";
+import { config } from "../apps/server/src/config.js";
 
 const base = process.env.SMOKE_BASE || "http://localhost:4000/api";
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -27,7 +30,42 @@ try {
     if (!Array.isArray(workspace[collection])) throw new Error(`Missing ${collection} collection`);
   }
   if (!login.user.employee_id || !login.user.role) throw new Error("Employee profile fields are missing");
+  const nonAdministrator = (workspace.workforce || workspace.people).find((person) => person.role !== "senior_leader");
+  if (nonAdministrator) {
+    const nonAdminToken = jwt.sign({ userId: nonAdministrator.id, organizationId: login.user.organization_id, email: nonAdministrator.email }, config.jwtSecret, { expiresIn: "5m" });
+    const forbiddenAgentResponse = await fetch(`${base}/admin/agent`, { headers: { Authorization: `Bearer ${nonAdminToken}` } });
+    if (forbiddenAgentResponse.status !== 403) throw new Error(`Administrator AI access guard returned ${forbiddenAgentResponse.status}`);
+  }
   if (login.user.role === "senior_leader") {
+    const agentResponse = await fetch(`${base}/admin/agent`, {
+      headers: { Authorization: `Bearer ${login.token}` }
+    });
+    if (!agentResponse.ok) throw new Error(`Administrator AI agent failed with ${agentResponse.status}`);
+    const agent = await agentResponse.json();
+    if (!Array.isArray(agent.tasks)) throw new Error("Administrator AI audit history is missing");
+    const overviewResponse = await fetch(`${base}/admin/agent/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
+      body: JSON.stringify({ command: "Show workspace overview" })
+    });
+    if (!overviewResponse.ok) throw new Error(`Administrator AI read command failed with ${overviewResponse.status}`);
+    const overview = await overviewResponse.json();
+    if (overview.task?.status !== "completed" || overview.task?.result?.type !== "metrics") throw new Error("Administrator AI overview did not complete");
+    await sql`DELETE FROM admin_agent_tasks WHERE id = ${overview.task.id}`;
+
+    const writePlanResponse = await fetch(`${base}/admin/agent/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },
+      body: JSON.stringify({ command: `Send a message to ${process.env.ADMIN_EMAIL}: Smoke test only` })
+    });
+    if (!writePlanResponse.ok) throw new Error(`Administrator AI write plan failed with ${writePlanResponse.status}`);
+    const writePlan = await writePlanResponse.json();
+    if (writePlan.task?.status !== "planned" || !writePlan.task?.requires_confirmation) throw new Error("Administrator AI write command bypassed confirmation");
+    const cancelResponse = await fetch(`${base}/admin/agent/${writePlan.task.id}/cancel`, {
+      method: "POST", headers: { Authorization: `Bearer ${login.token}` }
+    });
+    if (!cancelResponse.ok) throw new Error(`Administrator AI cancellation failed with ${cancelResponse.status}`);
+    await sql`DELETE FROM admin_agent_tasks WHERE id = ${writePlan.task.id}`;
     const historyResponse = await fetch(`${base}/admin/chat-history/conversations`, {
       headers: { Authorization: `Bearer ${login.token}` }
     });
