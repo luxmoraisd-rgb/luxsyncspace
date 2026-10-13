@@ -27,6 +27,26 @@ try {
     if (!Array.isArray(workspace[collection])) throw new Error(`Missing ${collection} collection`);
   }
   if (!login.user.employee_id || !login.user.role) throw new Error("Employee profile fields are missing");
+  if (login.user.role === "senior_leader") {
+    const historyResponse = await fetch(`${base}/admin/chat-history/conversations`, {
+      headers: { Authorization: `Bearer ${login.token}` }
+    });
+    if (!historyResponse.ok) throw new Error(`Administrator chat history failed with ${historyResponse.status}`);
+    const history = await historyResponse.json();
+    if (!Array.isArray(history.conversations)) throw new Error("Chat history conversation list is missing");
+    const conversation = history.conversations[0];
+    if (conversation) {
+      const historyPath = conversation.kind === "direct"
+        ? `/admin/chat-history/direct/${conversation.first_user_id}/${conversation.second_user_id}`
+        : `/admin/chat-history/channels/${conversation.channel_id}`;
+      const messagesResponse = await fetch(`${base}${historyPath}`, {
+        headers: { Authorization: `Bearer ${login.token}` }
+      });
+      if (!messagesResponse.ok) throw new Error(`Administrator message history failed with ${messagesResponse.status}`);
+      const messages = await messagesResponse.json();
+      if (!Array.isArray(messages.messages)) throw new Error("Chat history messages are missing");
+    }
+  }
   const duplicateInvite = await fetch(`${base}/invitations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${login.token}` },

@@ -300,6 +300,180 @@ async function currentRole(userId) {
   return user?.role;
 }
 
+async function isMainAdministrator(req, res) {
+  if (await currentRole(req.auth.userId) === "senior_leader") return true;
+  res.status(403).json({ error: "Only the main administrator can view chat history" });
+  return false;
+}
+
+workspaceRouter.get("/admin/chat-history/conversations", async (req, res, next) => {
+  try {
+    if (!await isMainAdministrator(req, res)) return;
+    const [directConversations, channelConversations] = await Promise.all([
+      sql`
+        WITH pairs AS (
+          SELECT LEAST(sender_id, recipient_id) AS first_user_id,
+                 GREATEST(sender_id, recipient_id) AS second_user_id,
+                 COUNT(*)::int AS message_count,
+                 MIN(sent_at) AS started_at,
+                 MAX(sent_at) AS latest_at
+          FROM direct_messages
+          WHERE organization_id = ${req.auth.organizationId}
+          GROUP BY LEAST(sender_id, recipient_id), GREATEST(sender_id, recipient_id)
+        )
+        SELECT CONCAT('direct:', pairs.first_user_id, ':', pairs.second_user_id) AS id,
+               'direct' AS kind,
+               pairs.first_user_id, pairs.second_user_id, pairs.message_count,
+               pairs.started_at, pairs.latest_at,
+               first_user.full_name AS first_user_name,
+               first_user.employee_id AS first_employee_id,
+               second_user.full_name AS second_user_name,
+               second_user.employee_id AS second_employee_id,
+               latest.preview AS last_message
+        FROM pairs
+        JOIN users first_user ON first_user.id = pairs.first_user_id
+        JOIN users second_user ON second_user.id = pairs.second_user_id
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN message.deleted_at IS NOT NULL THEN 'Message deleted'
+            WHEN NULLIF(message.body, '') IS NOT NULL THEN message.body
+            WHEN message.attachment_id IS NOT NULL THEN 'Attachment'
+            ELSE 'Message'
+          END AS preview
+          FROM direct_messages message
+          WHERE message.organization_id = ${req.auth.organizationId}
+            AND LEAST(message.sender_id, message.recipient_id) = pairs.first_user_id
+            AND GREATEST(message.sender_id, message.recipient_id) = pairs.second_user_id
+          ORDER BY message.sent_at DESC, message.id DESC
+          LIMIT 1
+        ) latest ON TRUE
+        ORDER BY pairs.latest_at DESC
+        LIMIT 300
+      `,
+      sql`
+        WITH channel_stats AS (
+          SELECT channel.id AS channel_id, channel.name, channel.is_private,
+                 COUNT(message.id)::int AS message_count,
+                 MIN(message.sent_at) AS started_at,
+                 MAX(message.sent_at) AS latest_at
+          FROM channels channel
+          JOIN channel_messages message ON message.channel_id = channel.id
+          WHERE channel.organization_id = ${req.auth.organizationId}
+          GROUP BY channel.id, channel.name, channel.is_private
+        )
+        SELECT CONCAT('channel:', stats.channel_id) AS id, 'channel' AS kind,
+               stats.channel_id, stats.name, stats.is_private, stats.message_count,
+               stats.started_at, stats.latest_at,
+               (SELECT COUNT(*)::int FROM channel_members WHERE channel_id = stats.channel_id) AS participant_count,
+               latest.preview AS last_message
+        FROM channel_stats stats
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN message.deleted_at IS NOT NULL THEN 'Message deleted'
+            WHEN NULLIF(message.body, '') IS NOT NULL THEN message.body
+            WHEN message.attachment_id IS NOT NULL THEN 'Attachment'
+            ELSE 'Message'
+          END AS preview
+          FROM channel_messages message
+          WHERE message.channel_id = stats.channel_id
+          ORDER BY message.sent_at DESC, message.id DESC
+          LIMIT 1
+        ) latest ON TRUE
+        ORDER BY stats.latest_at DESC
+        LIMIT 300
+      `
+    ]);
+    const conversations = [...directConversations, ...channelConversations]
+      .sort((left, right) => new Date(right.latest_at) - new Date(left.latest_at));
+    res.json({ conversations });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.get("/admin/chat-history/direct/:firstUserId/:secondUserId", async (req, res, next) => {
+  try {
+    if (!await isMainAdministrator(req, res)) return;
+    const params = z.object({ firstUserId: z.string().uuid(), secondUserId: z.string().uuid() }).parse(req.params);
+    const page = z.coerce.number().int().min(0).max(10000).default(0).parse(req.query.page);
+    const pageSize = 100;
+    const offset = page * pageSize;
+    const [participants, countRows, messages] = await Promise.all([
+      sql`
+        SELECT id, full_name, employee_id
+        FROM users
+        WHERE organization_id = ${req.auth.organizationId}
+          AND id IN (${params.firstUserId}, ${params.secondUserId})
+        ORDER BY full_name
+      `,
+      sql`
+        SELECT COUNT(*)::int AS total
+        FROM direct_messages
+        WHERE organization_id = ${req.auth.organizationId}
+          AND ((sender_id = ${params.firstUserId} AND recipient_id = ${params.secondUserId})
+            OR (sender_id = ${params.secondUserId} AND recipient_id = ${params.firstUserId}))
+      `,
+      sql`
+        SELECT message.id, message.body, message.sent_at, message.edited_at, message.deleted_at,
+               message.read_at, sender.id AS sender_id, sender.full_name AS sender_name,
+               recipient.id AS recipient_id, recipient.full_name AS recipient_name,
+               attachment.id AS attachment_id, attachment.file_name, attachment.mime_type, attachment.file_size
+        FROM direct_messages message
+        JOIN users sender ON sender.id = message.sender_id
+        JOIN users recipient ON recipient.id = message.recipient_id
+        LEFT JOIN message_attachments attachment ON attachment.id = message.attachment_id
+        WHERE message.organization_id = ${req.auth.organizationId}
+          AND ((message.sender_id = ${params.firstUserId} AND message.recipient_id = ${params.secondUserId})
+            OR (message.sender_id = ${params.secondUserId} AND message.recipient_id = ${params.firstUserId}))
+        ORDER BY message.sent_at DESC, message.id DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `
+    ]);
+    if (participants.length !== 2) return res.status(404).json({ error: "Conversation not found" });
+    res.json({ participants, messages: messages.reverse(), total: countRows[0]?.total || 0, page, pageSize });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.get("/admin/chat-history/channels/:channelId", async (req, res, next) => {
+  try {
+    if (!await isMainAdministrator(req, res)) return;
+    const channelId = z.string().uuid().parse(req.params.channelId);
+    const page = z.coerce.number().int().min(0).max(10000).default(0).parse(req.query.page);
+    const pageSize = 100;
+    const offset = page * pageSize;
+    const [channels, countRows, messages] = await Promise.all([
+      sql`
+        SELECT channel.id, channel.name, channel.is_private,
+               COALESCE(json_agg(json_build_object('id', member.id, 'name', member.full_name)
+                 ORDER BY member.full_name) FILTER (WHERE member.id IS NOT NULL), '[]') AS participants
+        FROM channels channel
+        LEFT JOIN channel_members membership ON membership.channel_id = channel.id
+        LEFT JOIN users member ON member.id = membership.user_id
+        WHERE channel.id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
+        GROUP BY channel.id
+      `,
+      sql`
+        SELECT COUNT(message.id)::int AS total
+        FROM channel_messages message
+        JOIN channels channel ON channel.id = message.channel_id
+        WHERE message.channel_id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
+      `,
+      sql`
+        SELECT message.id, message.body, message.sent_at, message.edited_at, message.deleted_at,
+               sender.id AS sender_id, sender.full_name AS sender_name,
+               attachment.id AS attachment_id, attachment.file_name, attachment.mime_type, attachment.file_size
+        FROM channel_messages message
+        JOIN channels channel ON channel.id = message.channel_id
+        JOIN users sender ON sender.id = message.sender_id
+        LEFT JOIN message_attachments attachment ON attachment.id = message.attachment_id
+        WHERE message.channel_id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
+        ORDER BY message.sent_at DESC, message.id DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `
+    ]);
+    if (!channels[0]) return res.status(404).json({ error: "Group conversation not found" });
+    res.json({ channel: channels[0], messages: messages.reverse(), total: countRows[0]?.total || 0, page, pageSize });
+  } catch (error) { next(error); }
+});
+
 async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
   if (!recipientIds.length) return;
   const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;

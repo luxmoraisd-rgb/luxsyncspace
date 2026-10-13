@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MessagesSquare, MoreVertical, Paperclip, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldAlert, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -242,6 +242,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           {canInvite && <button className={tab === "invite" ? "active" : ""} onClick={() => setTab("invite")}><Send size={18} /> Invite employees</button>}
           {isAdministrator && <button className={tab === "password-resets" ? "active" : ""} onClick={() => setTab("password-resets")}><KeyRound size={18} /> Password resets</button>}
           {isAdministrator && <button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><LifeBuoy size={18} /> Support requests</button>}
+          {isAdministrator && <button className={tab === "chat-history" ? "active" : ""} onClick={() => setTab("chat-history")}><MessagesSquare size={18} /> Chat history</button>}
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
         <section className="settings-content panel">
@@ -303,6 +304,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
               </section>)}
             </div>
           </>}
+          {tab === "chat-history" && isAdministrator && <ChatHistoryAdmin onToast={onToast} />}
           {tab === "app" && <>
             <header className="settings-section-head"><div><h2>App & notifications</h2><p>Install LuxSyncspace and choose how you receive new-message alerts.</p></div></header>
             <div className="app-settings-list">
@@ -364,6 +366,115 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       {showInstallHelp && <InstallHelp environment={installEnvironment} onClose={() => setShowInstallHelp(false)} />}
     </div>
   );
+}
+
+function ChatHistoryAdmin({ onToast }) {
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState("all");
+  const [page, setPage] = useState(0);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  useEffect(() => { loadConversations(); }, []);
+
+  useEffect(() => {
+    if (!selectedConversation) {
+      setHistory(null);
+      return;
+    }
+    let active = true;
+    setHistoryLoading(true);
+    const path = selectedConversation.kind === "direct"
+      ? `/admin/chat-history/direct/${selectedConversation.first_user_id}/${selectedConversation.second_user_id}?page=${page}`
+      : `/admin/chat-history/channels/${selectedConversation.channel_id}?page=${page}`;
+    api(path)
+      .then((result) => { if (active) setHistory(result); })
+      .catch((error) => { if (active) onToast(error.message); })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+  }, [selectedConversation, page, onToast]);
+
+  async function loadConversations() {
+    setConversationsLoading(true);
+    try {
+      const result = await api("/admin/chat-history/conversations");
+      const items = result.conversations || [];
+      setConversations(items);
+      setSelectedConversation((current) => current && items.some((item) => item.id === current.id) ? current : items[0] || null);
+    } catch (error) { onToast(error.message); }
+    finally { setConversationsLoading(false); }
+  }
+
+  function chooseConversation(conversation) {
+    setPage(0);
+    setHistory(null);
+    setSelectedConversation(conversation);
+  }
+
+  const visibleConversations = conversations.filter((conversation) => {
+    if (kind !== "all" && conversation.kind !== kind) return false;
+    const searchable = conversation.kind === "direct"
+      ? `${conversation.first_user_name} ${conversation.second_user_name} ${conversation.first_employee_id || ""} ${conversation.second_employee_id || ""}`
+      : conversation.name;
+    return searchable.toLowerCase().includes(query.trim().toLowerCase());
+  });
+  const totalPages = history ? Math.max(1, Math.ceil(history.total / history.pageSize)) : 1;
+
+  return <div className="chat-audit">
+    <header className="settings-section-head reset-section-head">
+      <div><h2>Chat history</h2><p>Main-administrator view of direct and group conversations in this organization.</p></div>
+      <button className="button button-secondary" onClick={loadConversations} disabled={conversationsLoading}><RefreshCw size={15} /> Refresh</button>
+    </header>
+    <div className="chat-audit-warning"><ShieldAlert size={19} /><span><b>Restricted and confidential</b><small>Use message history only for authorized company administration, investigations, or compliance work.</small></span></div>
+    <div className="chat-audit-layout">
+      <aside className="chat-audit-sidebar">
+        <label className="section-search chat-audit-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search people or groups" /></label>
+        <div className="chat-audit-filters">
+          {[['all', 'All'], ['direct', 'Direct'], ['channel', 'Groups']].map(([value, label]) => <button key={value} className={kind === value ? "active" : ""} onClick={() => setKind(value)}>{label}</button>)}
+        </div>
+        <div className="chat-audit-conversations">
+          {conversationsLoading && !conversations.length && <div className="chat-audit-empty">Loading conversations...</div>}
+          {!conversationsLoading && !visibleConversations.length && <div className="chat-audit-empty">No conversations found.</div>}
+          {visibleConversations.map((conversation) => {
+            const title = conversation.kind === "direct" ? `${conversation.first_user_name} & ${conversation.second_user_name}` : conversation.name;
+            const meta = conversation.kind === "direct" ? "Direct conversation" : `${conversation.participant_count} participants`;
+            return <button key={conversation.id} className={selectedConversation?.id === conversation.id ? "active" : ""} onClick={() => chooseConversation(conversation)}>
+              <span className={`chat-audit-type chat-audit-type-${conversation.kind}`}><MessagesSquare size={16} /></span>
+              <span><b>{title}</b><small>{meta} · {conversation.message_count} messages</small><em>{conversation.last_message || "No text"}</em></span>
+              <time>{new Date(conversation.latest_at).toLocaleDateString()}</time>
+            </button>;
+          })}
+        </div>
+      </aside>
+      <section className="chat-audit-history">
+        {!selectedConversation && <div className="chat-audit-empty chat-audit-empty-large"><MessagesSquare size={28} /><b>Select a conversation</b><span>The complete available history will appear here.</span></div>}
+        {selectedConversation && <>
+          <header>
+            <div><h3>{selectedConversation.kind === "direct" ? `${selectedConversation.first_user_name} & ${selectedConversation.second_user_name}` : selectedConversation.name}</h3><p>{history?.total ?? selectedConversation.message_count} messages · {selectedConversation.kind === "direct" ? "Private chat" : "Group chat"}</p></div>
+            <span>{page + 1} / {totalPages}</span>
+          </header>
+          <div className="chat-audit-messages">
+            {historyLoading && <div className="chat-audit-empty">Loading message history...</div>}
+            {!historyLoading && history && !history.messages.length && <div className="chat-audit-empty">No messages on this page.</div>}
+            {!historyLoading && history?.messages.map((message) => <article className={message.deleted_at ? "deleted" : ""} key={message.id}>
+              <div className="chat-audit-message-head"><b>{message.sender_name}</b>{message.recipient_name && <span>to {message.recipient_name}</span>}<time>{new Date(message.sent_at).toLocaleString()}</time></div>
+              <p>{message.deleted_at ? "This message was deleted for everyone." : message.body || (message.file_name ? "Shared an attachment" : "Empty message")}</p>
+              {message.file_name && !message.deleted_at && <div className="chat-audit-attachment"><Paperclip size={14} /> {message.file_name} <small>({Math.max(1, Math.round(message.file_size / 1024))} KB)</small></div>}
+              <footer>{message.edited_at && <span>Edited</span>}{message.read_at && <span>Read {new Date(message.read_at).toLocaleString()}</span>}</footer>
+            </article>)}
+          </div>
+          {history && history.total > history.pageSize && <footer className="chat-audit-pagination">
+            <button className="button button-secondary" disabled={historyLoading || page === 0} onClick={() => setPage((value) => value - 1)}>Newer messages</button>
+            <small>Showing {page * history.pageSize + 1}-{Math.min((page + 1) * history.pageSize, history.total)} of {history.total}</small>
+            <button className="button button-secondary" disabled={historyLoading || page + 1 >= totalPages} onClick={() => setPage((value) => value + 1)}>Older messages</button>
+          </footer>}
+        </>}
+      </section>
+    </div>
+  </div>;
 }
 
 function InstallHelp({ environment, onClose }) {
