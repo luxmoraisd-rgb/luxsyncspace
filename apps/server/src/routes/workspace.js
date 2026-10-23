@@ -518,20 +518,23 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
 
 workspaceRouter.post("/channels", async (req, res, next) => {
   try {
-    const role = await currentRole(req.auth.userId);
-    if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role does not have permission to create groups" });
     const input = z.object({
       name: z.string().trim().min(2, "Group name must contain at least 2 letters or numbers").max(60, "Group name must be 60 characters or fewer").regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Group name can only contain letters, numbers, and single hyphens"),
       description: z.string().trim().max(300).default(""),
       memberIds: z.array(z.string().uuid()).default([]),
       isPrivate: z.boolean().default(false)
     }).parse(req.body);
+    const initialMemberIds = [...new Set([req.auth.userId, ...input.memberIds])];
+    const validUsers = await sql`
+      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId}
+        AND employment_status = 'active' AND id = ANY(${initialMemberIds}::uuid[])
+    `;
+    if (validUsers.length !== initialMemberIds.length) return res.status(400).json({ error: "One or more employees are not available" });
     const [channel] = await sql`
       INSERT INTO channels (organization_id, name, description, is_private, created_by)
       VALUES (${req.auth.organizationId}, ${input.name}, ${input.description}, ${input.isPrivate}, ${req.auth.userId})
       RETURNING *
     `;
-    const initialMemberIds = [...new Set([req.auth.userId, ...input.memberIds])];
     await sql`
       INSERT INTO channel_members (channel_id, user_id)
       SELECT ${channel.id}, member_id FROM unnest(${initialMemberIds}::uuid[]) AS member_id
@@ -568,12 +571,14 @@ workspaceRouter.get("/channels/:id/members", async (req, res, next) => {
 workspaceRouter.put("/channels/:id/members", async (req, res, next) => {
   try {
     const role = await currentRole(req.auth.userId);
-    if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role cannot manage group members" });
     const { memberIds } = z.object({ memberIds: z.array(z.string().uuid()).max(500) }).parse(req.body);
     const [channel] = await sql`
-      SELECT id FROM channels WHERE id = ${req.params.id} AND organization_id = ${req.auth.organizationId}
+      SELECT id, created_by FROM channels WHERE id = ${req.params.id} AND organization_id = ${req.auth.organizationId}
     `;
     if (!channel) return res.status(404).json({ error: "Group not found" });
+    if (!groupRoles.has(role) && channel.created_by !== req.auth.userId) {
+      return res.status(403).json({ error: "Only the group creator or a team manager can manage group members" });
+    }
     const requested = [...new Set([req.auth.userId, ...memberIds])];
     const validUsers = await sql`
       SELECT id FROM users WHERE organization_id = ${req.auth.organizationId}

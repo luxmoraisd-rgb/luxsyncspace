@@ -42,7 +42,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const selectedPersonRef = useRef(null);
   const selectedChannelRef = useRef(null);
   const activeChannel = channels.find((channel) => channel.id === selected);
-  const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
+  const canCreateGroup = Boolean(user?.id);
+  const canManageGroup = activeChannel?.created_by === user.id || ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
   function openChannel(channelId) {
     setSelected(channelId);
@@ -545,8 +546,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
-              {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
-              {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
+              {selected && <button className="members-button" onClick={() => canManageGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
+              {selected && canManageGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button><button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Info size={19} /></button>
             </div>
           </header>
@@ -625,16 +626,16 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
           <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
             {moreOpen && <div className="channel-more-menu">
-              {canCreateGroup && <button onClick={() => { setManageMembers(true); setMoreOpen(false); }}><UserPlus size={16} /> Manage members</button>}
+              {canManageGroup && <button onClick={() => { setManageMembers(true); setMoreOpen(false); }}><UserPlus size={16} /> Manage members</button>}
               <button onClick={copyChannelLink}><Hash size={16} /> Copy channel link</button>
               <button onClick={exportConversation}><Download size={16} /> Export conversation</button>
               {(activeChannel?.created_by === user.id || ["hr", "senior_leader"].includes(user.role)) && <button className="danger-menu-item" onClick={() => { setDeleteGroupOpen(true); setMoreOpen(false); }}><Trash2 size={16} /> Delete group</button>}
             </div>}
           </div>
         </div>
-        <button className="details-row" onClick={() => canCreateGroup && setManageMembers(true)}><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
+        <button className="details-row" onClick={() => canManageGroup && setManageMembers(true)}><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
         <div className="details-members">{channelMembers.slice(0, 6).map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}</div>
-        {canCreateGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
+        {canManageGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
