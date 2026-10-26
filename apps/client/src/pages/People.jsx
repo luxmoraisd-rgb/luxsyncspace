@@ -1,4 +1,4 @@
-import { Building2, Copy, Grid2X2, List, MessageSquareText, MoreHorizontal, Pencil, Search, SlidersHorizontal, UserCheck, UserMinus, UserPlus, Users, UserX } from "lucide-react";
+import { Building2, Check, Copy, Grid2X2, List, MessageSquareText, MoreHorizontal, Pencil, Search, SlidersHorizontal, UserCheck, UserMinus, UserPlus, Users, UserX } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
@@ -7,14 +7,18 @@ import { api } from "../lib/api";
 export function People({ user, people, onStartChat, onInvite, onManage, onRefresh, onToast }) {
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("All");
+  const [employmentStatus, setEmploymentStatus] = useState("All");
+  const [viewMode, setViewMode] = useState("grid");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuId, setMenuId] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [busy, setBusy] = useState(false);
   const departments = ["All", ...new Set(people.map((p) => p.department))];
   const filtered = useMemo(() => people.filter((person) =>
     (department === "All" || person.department === department) &&
+    (employmentStatus === "All" || (person.employment_status || "active") === employmentStatus) &&
     `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase())
-  ), [people, query, department]);
+  ), [people, query, department, employmentStatus]);
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canManageEmployment = ["hr", "senior_leader"].includes(user.role);
   const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
@@ -55,10 +59,26 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
         <div className="directory-tools">
           <label className="section-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people by name, role, or team" /></label>
           <select value={department} onChange={(e) => setDepartment(e.target.value)}><option value="All">All departments</option>{departments.slice(1).map((item) => <option key={item}>{item}</option>)}</select>
-          <button className="icon-button"><SlidersHorizontal size={19} /></button>
-          <div className="view-toggle"><button className="active"><Grid2X2 size={17} /></button><button><List size={18} /></button></div>
+          <div className="people-filter">
+            <button className={`icon-button${employmentStatus !== "All" ? " active" : ""}`} onClick={() => setFiltersOpen((open) => !open)} aria-label="Filter people" aria-expanded={filtersOpen} aria-controls="people-filter-options" title="Filter people"><SlidersHorizontal size={19} /></button>
+            {filtersOpen && <div className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
+              <b>Employment status</b>
+              {[
+                ["All", "All statuses"],
+                ["active", "Active"],
+                ["offboarded", "Offboarded"],
+                ["deleted", "Deleted"]
+              ].map(([value, label]) => <button key={value} className={employmentStatus === value ? "selected" : ""} onClick={() => { setEmploymentStatus(value); setFiltersOpen(false); }} aria-pressed={employmentStatus === value}>
+                <span>{label}</span>{employmentStatus === value && <Check size={15} />}
+              </button>)}
+            </div>}
+          </div>
+          <div className="view-toggle" aria-label="People view">
+            <button type="button" className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")} aria-label="Grid view" aria-pressed={viewMode === "grid"} title="Grid view"><Grid2X2 size={17} /></button>
+            <button type="button" className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")} aria-label="List view" aria-pressed={viewMode === "list"} title="List view"><List size={18} /></button>
+          </div>
         </div>
-        <div className="people-grid">
+        <div className={`people-grid${viewMode === "list" ? " people-list" : ""}`}>
           {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}`} key={person.id}>
             <button className="person-more" onClick={() => setMenuId(menuId === person.id ? null : person.id)} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
             {menuId === person.id && <div className="person-menu">
