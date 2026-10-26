@@ -53,6 +53,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [messages, setMessages] = useState([]);
   const [latestDirectMessages, setLatestDirectMessages] = useState(directConversationTimes);
   const [message, setMessage] = useState("");
+  const directDraftsRef = useRef(new Map());
+  const selectedPersonIdRef = useRef(selectedPerson?.id || null);
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [query, setQuery] = useState("");
@@ -144,6 +146,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
+    const previousPersonId = selectedPersonIdRef.current;
+    if (previousPersonId) directDraftsRef.current.set(previousPersonId, message);
+    selectedPersonIdRef.current = selectedPerson?.id || null;
+    setMessage(selectedPerson ? directDraftsRef.current.get(selectedPerson.id) || "" : "");
     setMembersExpanded(false);
     setMessageSearch("");
     setMessageSearchOpen(false);

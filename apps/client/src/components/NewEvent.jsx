@@ -129,6 +129,17 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
   const filteredPeople = people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(attendeeQuery.toLowerCase())
   );
+  const allVisibleSelected = filteredPeople.length > 0
+    && filteredPeople.every((person) => form.attendeeIds.includes(person.id));
+  const toggleVisibleAttendees = () => {
+    const visibleIds = new Set(filteredPeople.map((person) => person.id));
+    update(
+      "attendeeIds",
+      allVisibleSelected
+        ? form.attendeeIds.filter((id) => !visibleIds.has(id))
+        : [...new Set([...form.attendeeIds, ...visibleIds])]
+    );
+  };
   const toggleAttendee = (personId) =>
     update(
       "attendeeIds",
@@ -253,7 +264,9 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
         <div className="group-members-field">
           <div className="group-members-label">
             <span>Invite employees</span>
-            <small>{form.attendeeIds.length} selected</small>
+            <button type="button" onClick={toggleVisibleAttendees} disabled={!filteredPeople.length}>
+              {allVisibleSelected ? "Clear selection" : "Select all"}
+            </button>
           </div>
           <label className="group-member-search">
             <Search size={16} />
