@@ -30,6 +30,14 @@ const attachmentUpload = multer({
   )
 });
 
+function findMentionedUserIds(body, users, senderId) {
+  return users.filter((person) => {
+    if (person.id === senderId || !person.full_name || person.full_name === "Team member") return false;
+    const escapedName = person.full_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[\\s([{])@${escapedName}(?=$|[^\\p{L}\\p{N}_'’\\-])`, "iu").test(body);
+  }).map((person) => person.id);
+}
+
 workspaceRouter.post("/attachments", (req, res, next) => {
   attachmentUpload.single("file")(req, res, async (uploadError) => {
     if (uploadError) {
@@ -86,7 +94,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
   try {
     const { userId, organizationId } = req.auth;
     const viewerRole = await currentRole(userId);
-    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
+    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows, directConversationRows] = await Promise.all([
       cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
              u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status,
              u.employment_status, u.offboarded_at, u.deleted_at, u.display_name, u.hide_full_name,
@@ -136,7 +144,15 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       sql`SELECT sender_id, COUNT(*)::int AS unread_count
           FROM direct_messages
           WHERE recipient_id = ${userId} AND read_at IS NULL
-          GROUP BY sender_id`
+          GROUP BY sender_id`,
+      sql`SELECT conversation.user_id, MAX(conversation.sent_at) AS last_message_at
+          FROM (
+            SELECT CASE WHEN sender_id = ${userId} THEN recipient_id ELSE sender_id END AS user_id, sent_at
+            FROM direct_messages
+            WHERE organization_id = ${organizationId}
+              AND (sender_id = ${userId} OR recipient_id = ${userId})
+          ) conversation
+          GROUP BY conversation.user_id`
     ]);
     const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
     const directoryPeople = people
@@ -152,7 +168,8 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
-      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count]))
+      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count])),
+      directConversationTimes: Object.fromEntries(directConversationRows.map((row) => [row.user_id, row.last_message_at]))
     });
   } catch (error) {
     next(error);
@@ -300,190 +317,7 @@ async function currentRole(userId) {
   return user?.role;
 }
 
-async function isMainAdministrator(req, res) {
-  if (await currentRole(req.auth.userId) === "senior_leader") return true;
-  res.status(403).json({ error: "Only the main administrator can view chat history" });
-  return false;
-}
-
-workspaceRouter.get("/admin/chat-history/conversations", async (req, res, next) => {
-  try {
-    if (!await isMainAdministrator(req, res)) return;
-    const [directConversations, channelConversations] = await Promise.all([
-      sql`
-        WITH pairs AS (
-          SELECT LEAST(sender_id, recipient_id) AS first_user_id,
-                 GREATEST(sender_id, recipient_id) AS second_user_id,
-                 COUNT(*)::int AS message_count,
-                 MIN(sent_at) AS started_at,
-                 MAX(sent_at) AS latest_at
-          FROM direct_messages
-          WHERE organization_id = ${req.auth.organizationId}
-          GROUP BY LEAST(sender_id, recipient_id), GREATEST(sender_id, recipient_id)
-        )
-        SELECT CONCAT('direct:', pairs.first_user_id, ':', pairs.second_user_id) AS id,
-               'direct' AS kind,
-               pairs.first_user_id, pairs.second_user_id, pairs.message_count,
-               pairs.started_at, pairs.latest_at,
-               first_user.full_name AS first_user_name,
-               first_user.employee_id AS first_employee_id,
-               second_user.full_name AS second_user_name,
-               second_user.employee_id AS second_employee_id,
-               latest.preview AS last_message
-        FROM pairs
-        JOIN users first_user ON first_user.id = pairs.first_user_id
-        JOIN users second_user ON second_user.id = pairs.second_user_id
-        LEFT JOIN LATERAL (
-          SELECT CASE
-            WHEN message.deleted_at IS NOT NULL THEN 'Message deleted'
-            WHEN NULLIF(message.body, '') IS NOT NULL THEN message.body
-            WHEN message.attachment_id IS NOT NULL THEN 'Attachment'
-            ELSE 'Message'
-          END AS preview
-          FROM direct_messages message
-          WHERE message.organization_id = ${req.auth.organizationId}
-            AND LEAST(message.sender_id, message.recipient_id) = pairs.first_user_id
-            AND GREATEST(message.sender_id, message.recipient_id) = pairs.second_user_id
-          ORDER BY message.sent_at DESC, message.id DESC
-          LIMIT 1
-        ) latest ON TRUE
-        ORDER BY pairs.latest_at DESC
-        LIMIT 300
-      `,
-      sql`
-        WITH channel_stats AS (
-          SELECT channel.id AS channel_id, channel.name, channel.is_private,
-                 COUNT(message.id)::int AS message_count,
-                 MIN(message.sent_at) AS started_at,
-                 MAX(message.sent_at) AS latest_at
-          FROM channels channel
-          JOIN channel_messages message ON message.channel_id = channel.id
-          WHERE channel.organization_id = ${req.auth.organizationId}
-          GROUP BY channel.id, channel.name, channel.is_private
-        )
-        SELECT CONCAT('channel:', stats.channel_id) AS id, 'channel' AS kind,
-               stats.channel_id, stats.name, stats.is_private, stats.message_count,
-               stats.started_at, stats.latest_at,
-               (SELECT COUNT(*)::int FROM channel_members WHERE channel_id = stats.channel_id) AS participant_count,
-               latest.preview AS last_message
-        FROM channel_stats stats
-        LEFT JOIN LATERAL (
-          SELECT CASE
-            WHEN message.deleted_at IS NOT NULL THEN 'Message deleted'
-            WHEN NULLIF(message.body, '') IS NOT NULL THEN message.body
-            WHEN message.attachment_id IS NOT NULL THEN 'Attachment'
-            ELSE 'Message'
-          END AS preview
-          FROM channel_messages message
-          WHERE message.channel_id = stats.channel_id
-          ORDER BY message.sent_at DESC, message.id DESC
-          LIMIT 1
-        ) latest ON TRUE
-        ORDER BY stats.latest_at DESC
-        LIMIT 300
-      `
-    ]);
-    const conversations = [...directConversations, ...channelConversations]
-      .sort((left, right) => new Date(right.latest_at) - new Date(left.latest_at));
-    res.json({ conversations });
-  } catch (error) { next(error); }
-});
-
-workspaceRouter.get("/admin/chat-history/direct/:firstUserId/:secondUserId", async (req, res, next) => {
-  try {
-    if (!await isMainAdministrator(req, res)) return;
-    const params = z.object({ firstUserId: z.string().uuid(), secondUserId: z.string().uuid() }).parse(req.params);
-    const page = z.coerce.number().int().min(0).max(10000).default(0).parse(req.query.page);
-    const pageSize = 100;
-    const offset = page * pageSize;
-    const [participants, countRows, messages] = await Promise.all([
-      sql`
-        SELECT id, full_name, employee_id
-        FROM users
-        WHERE organization_id = ${req.auth.organizationId}
-          AND id IN (${params.firstUserId}, ${params.secondUserId})
-        ORDER BY full_name
-      `,
-      sql`
-        SELECT COUNT(*)::int AS total
-        FROM direct_messages
-        WHERE organization_id = ${req.auth.organizationId}
-          AND ((sender_id = ${params.firstUserId} AND recipient_id = ${params.secondUserId})
-            OR (sender_id = ${params.secondUserId} AND recipient_id = ${params.firstUserId}))
-      `,
-      sql`
-        SELECT message.id, message.body, message.sent_at, message.edited_at, message.deleted_at,
-               message.read_at, sender.id AS sender_id, sender.full_name AS sender_name,
-               recipient.id AS recipient_id, recipient.full_name AS recipient_name,
-               attachment.id AS attachment_id, attachment.file_name, attachment.mime_type, attachment.file_size
-        FROM direct_messages message
-        JOIN users sender ON sender.id = message.sender_id
-        JOIN users recipient ON recipient.id = message.recipient_id
-        LEFT JOIN message_attachments attachment ON attachment.id = message.attachment_id
-        WHERE message.organization_id = ${req.auth.organizationId}
-          AND ((message.sender_id = ${params.firstUserId} AND message.recipient_id = ${params.secondUserId})
-            OR (message.sender_id = ${params.secondUserId} AND message.recipient_id = ${params.firstUserId}))
-        ORDER BY message.sent_at DESC, message.id DESC
-        LIMIT ${pageSize} OFFSET ${offset}
-      `
-    ]);
-    if (participants.length !== 2) return res.status(404).json({ error: "Conversation not found" });
-    res.json({ participants, messages: messages.reverse(), total: countRows[0]?.total || 0, page, pageSize });
-  } catch (error) { next(error); }
-});
-
-workspaceRouter.get("/admin/chat-history/channels/:channelId", async (req, res, next) => {
-  try {
-    if (!await isMainAdministrator(req, res)) return;
-    const channelId = z.string().uuid().parse(req.params.channelId);
-    const page = z.coerce.number().int().min(0).max(10000).default(0).parse(req.query.page);
-    const pageSize = 100;
-    const offset = page * pageSize;
-    const [channels, countRows, messages] = await Promise.all([
-      sql`
-        SELECT channel.id, channel.name, channel.is_private,
-               COALESCE(json_agg(json_build_object('id', member.id, 'name', member.full_name)
-                 ORDER BY member.full_name) FILTER (WHERE member.id IS NOT NULL), '[]') AS participants
-        FROM channels channel
-        LEFT JOIN channel_members membership ON membership.channel_id = channel.id
-        LEFT JOIN users member ON member.id = membership.user_id
-        WHERE channel.id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
-        GROUP BY channel.id
-      `,
-      sql`
-        SELECT COUNT(message.id)::int AS total
-        FROM channel_messages message
-        JOIN channels channel ON channel.id = message.channel_id
-        WHERE message.channel_id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
-      `,
-      sql`
-        SELECT message.id, message.body, message.sent_at, message.edited_at, message.deleted_at,
-               sender.id AS sender_id, sender.full_name AS sender_name,
-               attachment.id AS attachment_id, attachment.file_name, attachment.mime_type, attachment.file_size
-        FROM channel_messages message
-        JOIN channels channel ON channel.id = message.channel_id
-        JOIN users sender ON sender.id = message.sender_id
-        LEFT JOIN message_attachments attachment ON attachment.id = message.attachment_id
-        WHERE message.channel_id = ${channelId} AND channel.organization_id = ${req.auth.organizationId}
-        ORDER BY message.sent_at DESC, message.id DESC
-        LIMIT ${pageSize} OFFSET ${offset}
-      `
-    ]);
-    if (!channels[0]) return res.status(404).json({ error: "Group conversation not found" });
-    res.json({ channel: channels[0], messages: messages.reverse(), total: countRows[0]?.total || 0, page, pageSize });
-  } catch (error) { next(error); }
-});
-
-async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
-  if (!recipientIds.length) return;
-  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
-  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
-  const messages = await sql`
-    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
-    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-    RETURNING id, recipient_id, body, sent_at
-  `;
+function notifyMeetingInvitees({ req, event, messages, organizer, isCall = false }) {
   for (const message of messages) {
     const realtimeMessage = {
       ...message,
@@ -516,25 +350,35 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
   }
 }
 
+async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
+  if (!recipientIds.length) return;
+  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
+  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
+  const messages = await sql`
+    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
+    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+    RETURNING id, recipient_id, body, sent_at
+  `;
+  notifyMeetingInvitees({ req, event, messages, organizer, isCall });
+}
+
 workspaceRouter.post("/channels", async (req, res, next) => {
   try {
+    const role = await currentRole(req.auth.userId);
+    if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role does not have permission to create groups" });
     const input = z.object({
       name: z.string().trim().min(2, "Group name must contain at least 2 letters or numbers").max(60, "Group name must be 60 characters or fewer").regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Group name can only contain letters, numbers, and single hyphens"),
       description: z.string().trim().max(300).default(""),
       memberIds: z.array(z.string().uuid()).default([]),
       isPrivate: z.boolean().default(false)
     }).parse(req.body);
-    const initialMemberIds = [...new Set([req.auth.userId, ...input.memberIds])];
-    const validUsers = await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId}
-        AND employment_status = 'active' AND id = ANY(${initialMemberIds}::uuid[])
-    `;
-    if (validUsers.length !== initialMemberIds.length) return res.status(400).json({ error: "One or more employees are not available" });
     const [channel] = await sql`
       INSERT INTO channels (organization_id, name, description, is_private, created_by)
       VALUES (${req.auth.organizationId}, ${input.name}, ${input.description}, ${input.isPrivate}, ${req.auth.userId})
       RETURNING *
     `;
+    const initialMemberIds = [...new Set([req.auth.userId, ...input.memberIds])];
     await sql`
       INSERT INTO channel_members (channel_id, user_id)
       SELECT ${channel.id}, member_id FROM unnest(${initialMemberIds}::uuid[]) AS member_id
@@ -571,14 +415,12 @@ workspaceRouter.get("/channels/:id/members", async (req, res, next) => {
 workspaceRouter.put("/channels/:id/members", async (req, res, next) => {
   try {
     const role = await currentRole(req.auth.userId);
+    if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role cannot manage group members" });
     const { memberIds } = z.object({ memberIds: z.array(z.string().uuid()).max(500) }).parse(req.body);
     const [channel] = await sql`
-      SELECT id, created_by FROM channels WHERE id = ${req.params.id} AND organization_id = ${req.auth.organizationId}
+      SELECT id FROM channels WHERE id = ${req.params.id} AND organization_id = ${req.auth.organizationId}
     `;
     if (!channel) return res.status(404).json({ error: "Group not found" });
-    if (!groupRoles.has(role) && channel.created_by !== req.auth.userId) {
-      return res.status(403).json({ error: "Only the group creator or a team manager can manage group members" });
-    }
     const requested = [...new Set([req.auth.userId, ...memberIds])];
     const validUsers = await sql`
       SELECT id FROM users WHERE organization_id = ${req.auth.organizationId}
@@ -692,11 +534,11 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr"]).default("employee"),
       department: z.string().trim().min(2).max(100),
-      phone: z.string().trim().max(40).default(""),
+      phone: z.string().trim().regex(/^(\d{10})?$/, "Phone must be empty or exactly 10 digits").default(""),
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
-      joinedAt: z.string().date()
+      joinedAt: z.string().date().refine((d) => d <= new Date().toISOString().slice(0, 10), { message: "Joining date cannot be in the future" })
     }).parse(req.body);
     const [existing] = await sql`SELECT id FROM users WHERE lower(email) = lower(${input.email})`;
     if (existing) return res.status(409).json({ error: "An employee with this email already exists" });
@@ -782,11 +624,11 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr", "senior_leader"]),
       department: z.string().trim().min(2).max(100),
-      phone: z.string().trim().max(40).default(""),
+      phone: z.string().trim().regex(/^(\d{10})?$/, "Phone must be empty or exactly 10 digits").default(""),
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
-      joinedAt: z.string().date()
+      joinedAt: z.string().date().refine((d) => d <= new Date().toISOString().slice(0, 10), { message: "Joining date cannot be in the future" })
     }).parse(req.body);
 
     const [target] = await sql`
@@ -823,6 +665,7 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       ? await sql`SELECT full_name AS manager_name FROM users WHERE id = ${employee.manager_id}`
       : [];
     invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:status-updated");
     res.json({ employee: { ...employee, manager_name: manager?.manager_name || null }, message: "Employee details updated" });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
@@ -939,6 +782,12 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
     }).refine((value) => value.body || value.attachmentId || value.forwardedFrom, { message: "Enter a message or attach a file" }).parse(req.body);
     const [membership] = await sql`SELECT 1 FROM channel_members WHERE channel_id = ${req.params.id} AND user_id = ${req.auth.userId}`;
     if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
+    const mentionCandidates = await sql`
+      SELECT u.id, CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS full_name
+      FROM channel_members cm JOIN users u ON u.id = cm.user_id
+      WHERE cm.channel_id = ${req.params.id}
+    `;
+    const mentionedUserIds = findMentionedUserIds(input.body, mentionCandidates, req.auth.userId);
     const [message] = await sql`
       INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, forwarded_from_id)
       SELECT ${req.params.id}, ${req.auth.userId}, ${input.body},
@@ -985,6 +834,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       ...reply,
       channel_id: req.params.id,
       seen_by_all: !unreadMember,
+      mentioned_user_ids: mentionedUserIds,
       reactions: []
     };
     req.app.get("io")?.to(`channel:${req.params.id}`).emit("channel:message", result);
@@ -994,7 +844,15 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `channel-${req.params.id}`,
       url: "/"
-    }).catch(console.error);
+    }, mentionedUserIds).catch(console.error);
+    for (const userId of mentionedUserIds) {
+      sendPushToUser(userId, {
+        title: `${sender.sender_name} mentioned you in #${channel?.name || "group"}`,
+        body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
+        tag: `channel-${req.params.id}`,
+        url: "/"
+      }).catch(console.error);
+    }
     res.status(201).json(result);
   } catch (error) { next(error); }
 });
@@ -1187,8 +1045,12 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       attachmentId: z.string().uuid().nullable().optional(),
       replyTo: z.string().uuid().nullable().optional()
     }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
-    const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
+    const [colleague] = await sql`
+      SELECT id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS full_name
+      FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}
+    `;
     if (!colleague || colleague.id === req.auth.userId) return res.status(400).json({ error: "Select another employee" });
+    const mentionedUserIds = findMentionedUserIds(input.body, [colleague], req.auth.userId);
     const [message] = await sql`
       INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id, reply_to_id)
       SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${req.params.userId}, ${input.body}, a.id,
@@ -1215,10 +1077,12 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       FROM direct_messages original JOIN users author ON author.id = original.sender_id
       WHERE original.id = ${message.reply_to_id}
     ` : [null];
-    const result = { ...message, ...sender, ...attachment, ...reply, reactions: [] };
-    req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
+    const result = { ...message, ...sender, ...attachment, ...reply, mentioned_user_ids: mentionedUserIds, reactions: [] };
+    const payload = { ...result, recipient_id: req.params.userId };
+    req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", payload);
+    req.app.get("io")?.to(`user:${req.auth.userId}`).emit("direct:message", payload);
     sendPushToUser(req.params.userId, {
-      title: sender.sender_name,
+      title: mentionedUserIds.includes(req.params.userId) ? `${sender.sender_name} mentioned you` : sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `direct-${req.auth.userId}`,
       url: "/"
@@ -1334,24 +1198,65 @@ workspaceRouter.post("/events", async (req, res, next) => {
     }).parse(req.body);
     if (new Date(input.endsAt) <= new Date(input.startsAt)) return res.status(400).json({ error: "End time must be after start time" });
     const selectedAttendees = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validAttendees = selectedAttendees.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${selectedAttendees}::uuid[])
-    ` : [];
-    if (validAttendees.length !== selectedAttendees.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description}, ${input.location}, ${input.startsAt}, ${input.endsAt})
-      RETURNING *
+    const [result] = await sql`
+      WITH requested_attendees AS (
+        SELECT DISTINCT attendee_id AS id
+        FROM unnest(${selectedAttendees}::uuid[]) AS attendee_id
+      ),
+      valid_attendees AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_attendees ON requested_attendees.id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      attendee_validation AS (
+        SELECT COUNT(*) = (SELECT COUNT(*) FROM requested_attendees) AS valid
+        FROM valid_attendees
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description},
+          ${input.location}, ${input.startsAt}, ${input.endsAt}
+        WHERE (SELECT valid FROM attendee_validation)
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.id, 'accepted'
+        FROM created_event
+        CROSS JOIN (
+          SELECT ${req.auth.userId}::uuid AS id
+          UNION
+          SELECT id FROM requested_attendees
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT full_name, initials, avatar_color
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, requested_attendees.id,
+          ${`Meeting invitation: ${input.title}\n${config.appUrl}/?meeting=`} || created_event.id::text
+        FROM created_event
+        CROSS JOIN requested_attendees
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT attendee_validation.valid AS attendees_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM attendee_validation
     `;
-    const allAttendeeIds = [...new Set([req.auth.userId, ...input.attendeeIds])];
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted' FROM unnest(${allAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const attendeeIds = selectedAttendees;
-    const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: attendeeIds, organizer });
+    if (!result.attendees_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
@@ -1387,18 +1292,24 @@ workspaceRouter.post("/events/:eventId/attendees", async (req, res, next) => {
     ` : [];
     const existingIds = new Set(existing.map((attendee) => attendee.user_id));
     const newAttendeeIds = requestedIds.filter((id) => !existingIds.has(id));
-    if (!newAttendeeIds.length) return res.json({ added: 0, message: "Everyone selected is already invited" });
 
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${eventId}, attendee_id, 'accepted'
-      FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
+    if (newAttendeeIds.length) {
+      await sql`
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT ${eventId}, attendee_id, 'accepted'
+        FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
+        ON CONFLICT DO NOTHING
+      `;
+    }
     const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: newAttendeeIds, organizer });
-    invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ added: newAttendeeIds.length, message: `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited` });
+    await shareMeetingInvitation({ req, event, recipientIds: requestedIds, organizer });
+    if (newAttendeeIds.length) invalidateCache(`events:${req.auth.organizationId}`);
+    res.json({
+      added: newAttendeeIds.length,
+      message: newAttendeeIds.length
+        ? `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited`
+        : `${requestedIds.length} ${requestedIds.length === 1 ? "invitation" : "invitations"} sent again`
+    });
   } catch (error) { next(error); }
 });
 
@@ -1411,24 +1322,69 @@ workspaceRouter.post("/meetings/instant", async (req, res, next) => {
       isCall: z.boolean().default(false)
     }).parse(req.body || {});
     const recipientIds = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validRecipients = recipientIds.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${recipientIds}::uuid[])
-    ` : [];
-    if (validRecipients.length !== recipientIds.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
-        'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode})
-      RETURNING *
+    const messagePrefix = `${input.isCall ? `${input.mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${input.title}\n${config.appUrl}/?meeting=`;
+    const [result] = await sql`
+      WITH requested_recipients AS (
+        SELECT DISTINCT recipient_id
+        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+      ),
+      valid_recipients AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_recipients ON requested_recipients.recipient_id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      recipient_validation AS (
+        SELECT
+          (SELECT COUNT(*) FROM requested_recipients)
+          = (SELECT COUNT(*) FROM valid_recipients) AS valid
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
+          'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode}
+        FROM recipient_validation
+        WHERE valid
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.user_id, 'accepted'
+        FROM created_event
+        CROSS JOIN LATERAL (
+          SELECT ${req.auth.userId}::uuid AS user_id
+          UNION ALL
+          SELECT id FROM valid_recipients
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT id, full_name, initials, avatar_color, title
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient.id,
+          ${messagePrefix} || created_event.id::text
+        FROM created_event
+        CROSS JOIN valid_recipients AS recipient
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT
+        recipient_validation.valid AS recipients_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM recipient_validation
     `;
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted'
-      FROM unnest(${[req.auth.userId, ...recipientIds]}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const [organizer] = await sql`SELECT id, full_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds, organizer, isCall: input.isCall });
+    if (!result.recipients_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer, isCall: input.isCall });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
@@ -1438,13 +1394,20 @@ workspaceRouter.post("/meetings/:eventId/end", async (req, res, next) => {
   try {
     const eventId = z.string().uuid().parse(req.params.eventId);
     const [meeting] = await sql`
-      SELECT id, title, organizer_id, ended_at
+      SELECT id, title, organizer_id, ended_at, meeting_mode
       FROM events
       WHERE id = ${eventId} AND organization_id = ${req.auth.organizationId} AND is_online = TRUE
     `;
     if (!meeting) return res.status(404).json({ error: "Meeting not found" });
-    if (meeting.organizer_id !== req.auth.userId) {
-      return res.status(403).json({ error: "Only the meeting organizer can end the meeting for everyone" });
+
+    const isOrganizer = meeting.organizer_id === req.auth.userId;
+    const isAttendee = (await sql`
+      SELECT 1 FROM event_attendees WHERE event_id = ${eventId} AND user_id = ${req.auth.userId}
+    `).length > 0;
+    const role = await currentRole(req.auth.userId);
+    const canEnd = isOrganizer || isAttendee || ["hr", "senior_leader"].includes(role);
+    if (!canEnd) {
+      return res.status(403).json({ error: "Only participants or organizers can end this call or meeting" });
     }
     if (meeting.ended_at) return res.json({ meeting, message: "This meeting has already ended" });
 
@@ -1456,13 +1419,28 @@ workspaceRouter.post("/meetings/:eventId/end", async (req, res, next) => {
       RETURNING *
     `;
     const room = `meeting:${eventId}`;
+    const isCall = meeting.meeting_mode === "audio" || (meeting.title || "").toLowerCase().includes("call") || (meeting.title || "").includes(" and ");
+    const endTitle = isCall ? "Call ended" : "Meeting ended";
+    const endMessage = isOrganizer
+      ? `${meeting.title} was ended by the organizer.`
+      : `${endTitle}.`;
+
     req.app.get("io")?.to(room).emit("meeting:ended", {
       event_id: eventId,
-      message: `${meeting.title} was ended by the organizer.`
+      message: endMessage,
+      isCall
     });
     req.app.get("io")?.in(room).socketsLeave(room);
+
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("event:ended", {
+      event_id: eventId,
+      ended_at: ended?.ended_at || new Date().toISOString(),
+      title: meeting.title,
+      isCall
+    });
+
     invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ meeting: ended, message: "Meeting ended for everyone" });
+    res.json({ meeting: ended, message: endTitle });
   } catch (error) { next(error); }
 });
 
@@ -1481,38 +1459,51 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
     if (!canCancel) return res.status(403).json({ error: "Only the organizer, HR, or a senior leader can cancel this event" });
     if (event.cancelled_at) return res.json({ event, message: "This event is already cancelled" });
 
+    const [attendees, cancelledBy] = await Promise.all([
+      sql`
+        SELECT ea.user_id FROM event_attendees ea
+        WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
+      `,
+      sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`
+    ]);
+    if (!cancelledBy) return res.status(401).json({ error: "Cancelling user not found" });
+
     const [cancelled] = await sql`
       UPDATE events
       SET cancelled_at = NOW(), cancelled_by = ${req.auth.userId}, cancellation_reason = ${input.reason}
-      WHERE id = ${eventId}
+      WHERE id = ${eventId} AND cancelled_at IS NULL
       RETURNING *
     `;
-    const attendees = await sql`
-      SELECT ea.user_id FROM event_attendees ea
-      WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
-    `;
-    const [cancelledBy] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    if (!cancelled) return res.status(409).json({ error: "This event was already cancelled" });
+
+    invalidateCache(`events:${req.auth.organizationId}`);
     const title = `Cancelled: ${event.title}`;
     const body = `${cancelledBy.full_name} cancelled this ${event.is_online ? "meeting" : "event"}${input.reason ? `. Reason: ${input.reason}` : "."}`;
     const recipientIds = attendees.map((attendee) => attendee.user_id);
+
     if (recipientIds.length) {
-      const cancellationMessages = await sql`
-        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
-          ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
-        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-        RETURNING id, recipient_id, body, sent_at
-      `;
-      for (const message of cancellationMessages) {
-        req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
-          ...message,
-          sender_id: req.auth.userId,
-          sender_name: cancelledBy.full_name,
-          initials: cancelledBy.initials,
-          avatar_color: cancelledBy.avatar_color
-        });
+      try {
+        const cancellationMessages = await sql`
+          INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+          SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
+            ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
+          FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+          RETURNING id, recipient_id, body, sent_at
+        `;
+        for (const message of cancellationMessages) {
+          req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
+            ...message,
+            sender_id: req.auth.userId,
+            sender_name: cancelledBy.full_name,
+            initials: cancelledBy.initials,
+            avatar_color: cancelledBy.avatar_color
+          });
+        }
+      } catch (error) {
+        console.error(`Could not save cancellation messages for event ${eventId}`, error);
       }
     }
+
     for (const attendee of attendees) {
       req.app.get("io")?.to(`user:${attendee.user_id}`).emit("event:cancelled", {
         event_id: eventId,
@@ -1524,11 +1515,10 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
         title,
         body,
         tag: `event-cancelled-${eventId}`,
-        url: "/?view=calendar"
-      }).catch(console.error);
+        url: "/?view=meetings"
+      }).catch((error) => console.error("Could not send event cancellation push notification", error));
     }
     req.app.get("io")?.to(`meeting:${eventId}`).emit("meeting:cancelled", { title, body });
-    invalidateCache(`events:${req.auth.organizationId}`);
     res.json({ event: cancelled, message: "Event cancelled and attendees notified" });
   } catch (error) { next(error); }
 });

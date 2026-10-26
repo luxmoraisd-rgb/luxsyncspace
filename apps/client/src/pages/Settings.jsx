@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Bot, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MessagesSquare, MoreVertical, Paperclip, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldAlert, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
-import { AdminAgent } from "../components/AdminAgent";
+
+const today = new Date().toISOString().slice(0, 10);
 
 const emptyInvite = () => ({
   fullName: "",
@@ -18,7 +19,7 @@ const emptyInvite = () => ({
   managerId: "",
   joinedAt: new Date().toISOString().slice(0, 10),
   bio: ""
-});
+}); 
 
 function getInstallEnvironment() {
   const userAgent = window.navigator.userAgent || "";
@@ -55,7 +56,11 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canDeleteEmployees = ["hr", "senior_leader"].includes(user.role);
   const isAdministrator = user.role === "senior_leader";
-  const filtered = people.filter((person) => `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
+  const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
+  const filtered = people.filter((person) =>
+    (person.employment_status || "active") !== "deleted"
+    && `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase())
+  );
 
   useEffect(() => {
     const available = () => setInstallAvailable(true);
@@ -75,6 +80,13 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   useEffect(() => {
     setPrivacy({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
   }, [user.display_name, user.hide_full_name, user.hide_email]);
+
+  useEffect(() => {
+    if (selected && people) {
+      const updated = people.find((p) => p.id === selected.id);
+      if (updated) setSelected(updated);
+    }
+  }, [people]);
 
   useEffect(() => {
     if (tab !== "password-resets" || !isAdministrator) return;
@@ -122,8 +134,6 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     try {
       const result = await api("/profile/privacy", { method: "PATCH", body: JSON.stringify(privacy) });
       onUserUpdate?.(result.user);
-      await onRefresh();
-      window.dispatchEvent(new CustomEvent("luxsyncspace:self-updated", { detail: result.user }));
       onToast(result.message);
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }
@@ -182,7 +192,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       title: person.title || "",
       department: person.department || "",
       role: person.role || "employee",
-      phone: person.phone || "",
+      phone: (person.phone || "").replace(/\D/g, "").slice(0, 10),
       location: person.location || "",
       managerId: person.manager_id || "",
       joinedAt: person.joined_at ? String(person.joined_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -197,6 +207,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       const result = await api(`/employees/${selected.id}`, { method: "PATCH", body: JSON.stringify(editing) });
       setSelected(result.employee);
       setEditing(null);
+      if (onUserUpdate && (selected.id === user.id || result.employee?.id === user.id)) {
+        onUserUpdate(result.employee);
+      }
       await onRefresh();
       onToast(result.message || "Employee details updated");
     } catch (error) { onToast(error.message); }
@@ -243,8 +256,6 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           {canInvite && <button className={tab === "invite" ? "active" : ""} onClick={() => setTab("invite")}><Send size={18} /> Invite employees</button>}
           {isAdministrator && <button className={tab === "password-resets" ? "active" : ""} onClick={() => setTab("password-resets")}><KeyRound size={18} /> Password resets</button>}
           {isAdministrator && <button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><LifeBuoy size={18} /> Support requests</button>}
-          {isAdministrator && <button className={tab === "ai-agent" ? "active" : ""} onClick={() => setTab("ai-agent")}><Bot size={18} /> AI agent</button>}
-          {isAdministrator && <button className={tab === "chat-history" ? "active" : ""} onClick={() => setTab("chat-history")}><MessagesSquare size={18} /> Chat history</button>}
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
         <section className="settings-content panel">
@@ -275,8 +286,8 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
               <label><span>Employee ID</span><input value={invite.employeeId} onChange={(e) => setInvite({ ...invite, employeeId: e.target.value.toUpperCase() })} placeholder="e.g. LUX-1002 (leave blank to generate automatically)" pattern="[A-Za-z0-9-]{3,30}" /></label>
               <label><span>Designation</span><input value={invite.title} onChange={(e) => setInvite({ ...invite, title: e.target.value })} placeholder="e.g. Software Engineer" required /></label>
               <div className="form-grid"><label><span>Department</span><input value={invite.department} onChange={(e) => setInvite({ ...invite, department: e.target.value })} required /></label><label><span>Access role</span><select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr">HR</option></select></label></div>
-              <div className="form-grid"><label><span>Phone number</span><input type="tel" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value })} placeholder="+91 98765 43210" /></label><label><span>Work location</span><input value={invite.location} onChange={(e) => setInvite({ ...invite, location: e.target.value })} placeholder="e.g. Hyderabad, India" /></label></div>
-              <div className="form-grid"><label><span>Reporting manager</span><select value={invite.managerId} onChange={(e) => setInvite({ ...invite, managerId: e.target.value })}><option value="">Not assigned</option>{people.map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={invite.joinedAt} onChange={(e) => setInvite({ ...invite, joinedAt: e.target.value })} required /></label></div>
+              <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={invite.location} onChange={(e) => setInvite({ ...invite, location: e.target.value })} placeholder="e.g. Hyderabad, India" /></label></div>
+              <div className="form-grid"><label><span>Reporting manager</span><select value={invite.managerId} onChange={(e) => setInvite({ ...invite, managerId: e.target.value })}><option value="">Not assigned</option>{activePeople.map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={invite.joinedAt} onChange={(e) => setInvite({ ...invite, joinedAt: e.target.value })} required /></label></div>
               <label><span>Employee profile summary</span><textarea value={invite.bio} onChange={(e) => setInvite({ ...invite, bio: e.target.value })} placeholder="Add responsibilities, expertise, or a short professional introduction…" maxLength={1000} /></label>
               <div className="email-delivery-note"><ShieldCheck size={18} /><span><b>Secure email delivery</b><small>The employee will receive their email as username and a generated temporary password. They must replace it after signing in.</small></span></div>
               <button className="button button-primary" disabled={busy}><Send size={17} /> {busy ? "Creating account and sending…" : "Send employee invitation"}</button>
@@ -306,8 +317,6 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
               </section>)}
             </div>
           </>}
-          {tab === "chat-history" && isAdministrator && <ChatHistoryAdmin onToast={onToast} />}
-          {tab === "ai-agent" && isAdministrator && <AdminAgent onToast={onToast} />}
           {tab === "app" && <>
             <header className="settings-section-head"><div><h2>App & notifications</h2><p>Install LuxSyncspace and choose how you receive new-message alerts.</p></div></header>
             <div className="app-settings-list">
@@ -339,13 +348,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
         </section>
       </div>
       {selected && !editing && !pendingDelete && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{(canEditEmployee(selected) || canDeleteEmployee(selected)) && <div className="employee-profile-actions">{canDeleteEmployee(selected) && <button className="button button-danger" onClick={() => setPendingDelete(selected)}><UserX size={16} /> Delete employee</button>}{canEditEmployee(selected) && <button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button>}</div>}</div></Modal>}
-      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => setEditing(null)}>
-        <form className="event-form" onSubmit={updateEmployee}>
+      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => { setEditing(null); setSelected(null); }}>        <form className="event-form" onSubmit={updateEmployee}>
           <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Employee ID</span><input value={editing.employeeId} onChange={(e) => setEditing({ ...editing, employeeId: e.target.value.toUpperCase() })} pattern="[A-Za-z0-9-]{3,30}" required /></label><label><span>Designation</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Department</span><input value={editing.department} onChange={(e) => setEditing({ ...editing, department: e.target.value })} required /></label><label><span>Access role</span><select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr" disabled={user.role === "manager"}>HR</option>{user.role === "senior_leader" && <option value="senior_leader">Senior leader</option>}</select></label></div>
-          <div className="form-grid"><label><span>Phone number</span><input type="tel" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
-          <div className="form-grid"><label><span>Reporting manager</span><select value={editing.managerId} onChange={(e) => setEditing({ ...editing, managerId: e.target.value })}><option value="">Not assigned</option>{people.filter((person) => person.id !== selected.id).map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={editing.joinedAt} onChange={(e) => setEditing({ ...editing, joinedAt: e.target.value })} required /></label></div>
+          <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
+          <div className="form-grid"><label><span>Reporting manager</span><select value={editing.managerId} onChange={(e) => setEditing({ ...editing, managerId: e.target.value })}><option value="">Not assigned</option>{activePeople.filter((person) => person.id !== selected.id).map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={editing.joinedAt} onChange={(e) => setEditing({ ...editing, joinedAt: e.target.value })} required /></label></div>
           <label><span>Employee profile summary</span><textarea value={editing.bio} onChange={(e) => setEditing({ ...editing, bio: e.target.value })} maxLength={1000} /></label>
           <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>
         </form>
@@ -355,7 +363,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <UserX size={30} />
           <h3>Deactivate and mark as deleted</h3>
           <p>The employee will be signed out and will no longer be able to access the workspace. Existing conversations and records will be preserved.</p>
-          <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button className="button button-danger" onClick={deleteEmployee} disabled={busy}>{busy ? "Deleting…" : "Delete employee"}</button></div>
+          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button type="button" className="button button-danger" onClick={deleteEmployee} disabled={busy}><UserX size={16} /> {busy ? "Deleting…" : "Delete employee"}</button></div>
         </div>
       </Modal>}
       {pendingReset && <Modal title={`Reset ${pendingReset.full_name}'s password?`} subtitle="Administrator password reset" onClose={() => !busy && setPendingReset(null)}>
@@ -369,115 +377,6 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       {showInstallHelp && <InstallHelp environment={installEnvironment} onClose={() => setShowInstallHelp(false)} />}
     </div>
   );
-}
-
-function ChatHistoryAdmin({ onToast }) {
-  const [conversations, setConversations] = useState([]);
-  const [selectedConversation, setSelectedConversation] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState("all");
-  const [page, setPage] = useState(0);
-  const [conversationsLoading, setConversationsLoading] = useState(true);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  useEffect(() => { loadConversations(); }, []);
-
-  useEffect(() => {
-    if (!selectedConversation) {
-      setHistory(null);
-      return;
-    }
-    let active = true;
-    setHistoryLoading(true);
-    const path = selectedConversation.kind === "direct"
-      ? `/admin/chat-history/direct/${selectedConversation.first_user_id}/${selectedConversation.second_user_id}?page=${page}`
-      : `/admin/chat-history/channels/${selectedConversation.channel_id}?page=${page}`;
-    api(path)
-      .then((result) => { if (active) setHistory(result); })
-      .catch((error) => { if (active) onToast(error.message); })
-      .finally(() => { if (active) setHistoryLoading(false); });
-    return () => { active = false; };
-  }, [selectedConversation, page, onToast]);
-
-  async function loadConversations() {
-    setConversationsLoading(true);
-    try {
-      const result = await api("/admin/chat-history/conversations");
-      const items = result.conversations || [];
-      setConversations(items);
-      setSelectedConversation((current) => current && items.some((item) => item.id === current.id) ? current : items[0] || null);
-    } catch (error) { onToast(error.message); }
-    finally { setConversationsLoading(false); }
-  }
-
-  function chooseConversation(conversation) {
-    setPage(0);
-    setHistory(null);
-    setSelectedConversation(conversation);
-  }
-
-  const visibleConversations = conversations.filter((conversation) => {
-    if (kind !== "all" && conversation.kind !== kind) return false;
-    const searchable = conversation.kind === "direct"
-      ? `${conversation.first_user_name} ${conversation.second_user_name} ${conversation.first_employee_id || ""} ${conversation.second_employee_id || ""}`
-      : conversation.name;
-    return searchable.toLowerCase().includes(query.trim().toLowerCase());
-  });
-  const totalPages = history ? Math.max(1, Math.ceil(history.total / history.pageSize)) : 1;
-
-  return <div className="chat-audit">
-    <header className="settings-section-head reset-section-head">
-      <div><h2>Chat history</h2><p>Main-administrator view of direct and group conversations in this organization.</p></div>
-      <button className="button button-secondary" onClick={loadConversations} disabled={conversationsLoading}><RefreshCw size={15} /> Refresh</button>
-    </header>
-    <div className="chat-audit-warning"><ShieldAlert size={19} /><span><b>Restricted and confidential</b><small>Use message history only for authorized company administration, investigations, or compliance work.</small></span></div>
-    <div className="chat-audit-layout">
-      <aside className="chat-audit-sidebar">
-        <label className="section-search chat-audit-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search people or groups" /></label>
-        <div className="chat-audit-filters">
-          {[['all', 'All'], ['direct', 'Direct'], ['channel', 'Groups']].map(([value, label]) => <button key={value} className={kind === value ? "active" : ""} onClick={() => setKind(value)}>{label}</button>)}
-        </div>
-        <div className="chat-audit-conversations">
-          {conversationsLoading && !conversations.length && <div className="chat-audit-empty">Loading conversations...</div>}
-          {!conversationsLoading && !visibleConversations.length && <div className="chat-audit-empty">No conversations found.</div>}
-          {visibleConversations.map((conversation) => {
-            const title = conversation.kind === "direct" ? `${conversation.first_user_name} & ${conversation.second_user_name}` : conversation.name;
-            const meta = conversation.kind === "direct" ? "Direct conversation" : `${conversation.participant_count} participants`;
-            return <button key={conversation.id} className={selectedConversation?.id === conversation.id ? "active" : ""} onClick={() => chooseConversation(conversation)}>
-              <span className={`chat-audit-type chat-audit-type-${conversation.kind}`}><MessagesSquare size={16} /></span>
-              <span><b>{title}</b><small>{meta} · {conversation.message_count} messages</small><em>{conversation.last_message || "No text"}</em></span>
-              <time>{new Date(conversation.latest_at).toLocaleDateString()}</time>
-            </button>;
-          })}
-        </div>
-      </aside>
-      <section className="chat-audit-history">
-        {!selectedConversation && <div className="chat-audit-empty chat-audit-empty-large"><MessagesSquare size={28} /><b>Select a conversation</b><span>The complete available history will appear here.</span></div>}
-        {selectedConversation && <>
-          <header>
-            <div><h3>{selectedConversation.kind === "direct" ? `${selectedConversation.first_user_name} & ${selectedConversation.second_user_name}` : selectedConversation.name}</h3><p>{history?.total ?? selectedConversation.message_count} messages · {selectedConversation.kind === "direct" ? "Private chat" : "Group chat"}</p></div>
-            <span>{page + 1} / {totalPages}</span>
-          </header>
-          <div className="chat-audit-messages">
-            {historyLoading && <div className="chat-audit-empty">Loading message history...</div>}
-            {!historyLoading && history && !history.messages.length && <div className="chat-audit-empty">No messages on this page.</div>}
-            {!historyLoading && history?.messages.map((message) => <article className={message.deleted_at ? "deleted" : ""} key={message.id}>
-              <div className="chat-audit-message-head"><b>{message.sender_name}</b>{message.recipient_name && <span>to {message.recipient_name}</span>}<time>{new Date(message.sent_at).toLocaleString()}</time></div>
-              <p>{message.deleted_at ? "This message was deleted for everyone." : message.body || (message.file_name ? "Shared an attachment" : "Empty message")}</p>
-              {message.file_name && !message.deleted_at && <div className="chat-audit-attachment"><Paperclip size={14} /> {message.file_name} <small>({Math.max(1, Math.round(message.file_size / 1024))} KB)</small></div>}
-              <footer>{message.edited_at && <span>Edited</span>}{message.read_at && <span>Read {new Date(message.read_at).toLocaleString()}</span>}</footer>
-            </article>)}
-          </div>
-          {history && history.total > history.pageSize && <footer className="chat-audit-pagination">
-            <button className="button button-secondary" disabled={historyLoading || page === 0} onClick={() => setPage((value) => value - 1)}>Newer messages</button>
-            <small>Showing {page * history.pageSize + 1}-{Math.min((page + 1) * history.pageSize, history.total)} of {history.total}</small>
-            <button className="button button-secondary" disabled={historyLoading || page + 1 >= totalPages} onClick={() => setPage((value) => value + 1)}>Older messages</button>
-          </footer>}
-        </>}
-      </section>
-    </div>
-  </div>;
 }
 
 function InstallHelp({ environment, onClose }) {

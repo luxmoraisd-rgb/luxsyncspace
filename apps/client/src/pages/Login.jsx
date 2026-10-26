@@ -3,7 +3,8 @@ import { ArrowLeft, ArrowRight, CalendarDays, Check, CircleCheck, Eye, EyeOff, L
 import { api } from "../lib/api";
 
 export function Login({ onLogin }) {
-  const [email, setEmail] = useState("Luxmor@syncspace.com");
+  const [email, setEmail] = useState();
+  // const [email, setEmail] = useState("Luxmor@syncspace.com");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

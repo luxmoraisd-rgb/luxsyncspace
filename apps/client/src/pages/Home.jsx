@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, CalendarPlus, ChevronRight, Hash, Megaphone, MessageSquareText, Plus, Sparkles, Users, Video } from "lucide-react";
+import { ArrowRight, Ban, CalendarPlus, ChevronRight, Hash, Megaphone, MessageSquareText, PhoneOff, Plus, Sparkles, Users, Video } from "lucide-react";
 import { Avatar } from "../components/Avatar";
 import { CreateAnnouncement } from "../components/CreateAnnouncement";
 import { api } from "../lib/api";
@@ -7,7 +7,7 @@ import { dateHeading, eventTime } from "../lib/format";
 
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
-  const nextEvents = data.events.slice(0, 3);
+  const nextEvents = data.events.slice(0, 4);
   const online = data.people.filter((p) => p.presence === "online");
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -49,13 +49,19 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
         <section className="panel schedule-panel">
           <header className="panel-header"><div><h2>Today’s schedule</h2><p>{dateHeading(new Date())}</p></div><button className="icon-button" onClick={onNewEvent}><Plus size={19} /></button></header>
           <div className="schedule-list">
-            {nextEvents.map((event) => (
-              <div className="schedule-item" key={event.id} style={{ "--event": event.color }}>
-                <time>{eventTime(event.starts_at)}</time>
-                <span><b>{event.title}</b><small>{event.location}</small></span>
-                {event.is_online && <button className="join-button" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button>}
-              </div>
-            ))}
+            {nextEvents.map((event) => {
+              const isCall = event.meeting_mode === "audio" || (event.title || "").toLowerCase().includes("call") || (event.title || "").includes(" and ");
+              const endedLabel = isCall ? "Call Ended" : "Meeting Ended";
+              return (
+                <div className="schedule-item" key={event.id} style={{ "--event": event.color }}>
+                  <time>{eventTime(event.starts_at)}</time>
+                  <span><b>{event.title}</b><small>{event.location}</small></span>
+                  {event.is_online && !event.ended_at && !event.cancelled_at && <button className="join-button" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button>}
+                  {event.ended_at && <span className="meeting-ended-chip"><PhoneOff size={11} /> {endedLabel}</span>}
+                  {event.cancelled_at && <span className="meeting-cancelled-chip"><Ban size={11} /> Cancelled</span>}
+                </div>
+              );
+            })}
             {!nextEvents.length && <div className="empty-compact"><Sparkles size={20} /><span>Your calendar is clear.</span></div>}
           </div>
           <button className="full-link" onClick={() => navigate("calendar")}>Open calendar <ArrowRight size={15} /></button>

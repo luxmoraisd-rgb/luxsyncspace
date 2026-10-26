@@ -34,12 +34,21 @@ export function notificationsEnabled() {
 
 export async function enableNotifications() {
   if (!notificationsSupported()) throw new Error("Notifications are not supported in this browser");
-  const permission = await Notification.requestPermission();
-  const enabled = permission === "granted";
-  if (!enabled) throw new Error("Notification permission was not granted");
+  if (!("PushManager" in window)) throw new Error("Push notifications are not supported in this browser");
+  const permission = Notification.permission === "denied"
+    ? "denied"
+    : await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error(permission === "denied"
+      ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
+      : "Allow notifications in the browser prompt to enable alerts.");
+  }
+  const { publicKey } = await api("/push/config");
+  if (!publicKey) throw new Error("Push notifications are not configured on the server");
+
   localStorage.setItem(ENABLED_KEY, "true");
   try {
-    await refreshNotificationSubscription();
+    await refreshNotificationSubscription(publicKey);
   } catch (error) {
     localStorage.setItem(ENABLED_KEY, "false");
     throw error;
@@ -56,13 +65,15 @@ async function getNotificationRegistration() {
   return navigator.serviceWorker.ready;
 }
 
-export async function refreshNotificationSubscription() {
+export async function refreshNotificationSubscription(configuredPublicKey) {
   if (!notificationsEnabled()) return false;
   if (subscriptionRefresh) return subscriptionRefresh;
   subscriptionRefresh = (async () => {
     const registration = await getNotificationRegistration();
     await navigator.serviceWorker.ready;
-    const { publicKey } = await api("/push/config");
+    const { publicKey } = configuredPublicKey
+      ? { publicKey: configuredPublicKey }
+      : await api("/push/config");
     if (!publicKey) throw new Error("Push notifications are not configured");
     const existing = await registration.pushManager.getSubscription();
     const subscription = existing || await registration.pushManager.subscribe({
@@ -141,6 +152,11 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
   if (!notificationsEnabled()) return;
   if (document.visibilityState === "visible") return;
   const registration = await getNotificationRegistration();
+  
+  let targetUrl = "/";
+  if (tag && tag.startsWith("channel-")) targetUrl = `/?view=chat&channel=${tag.replace("channel-", "")}`;
+  if (tag && tag.startsWith("direct-")) targetUrl = `/?view=chat&direct=${tag.replace("direct-", "")}`;
+
   await registration.showNotification(title, {
     body,
     tag,
@@ -148,7 +164,7 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
     badge: "/icons/luxsyncspace-192.png",
     vibrate: sound === "meeting" ? [220, 90, 220, 90, 420] : [180, 80, 180],
     renotify: true,
-    data: { url: "/" }
+    data: { url: targetUrl }
   });
 }
 
@@ -177,11 +193,14 @@ export async function playNotificationSound(sound = "message") {
 }
 
 let activeRingtone = null;
+let ringtoneGeneration = 0;
 
 export async function startIncomingCallRingtone() {
   stopIncomingCallRingtone();
+  const generation = ringtoneGeneration;
   const context = getAudioContext();
   if (!context || !(await primeNotificationAudio())) return;
+  if (generation !== ringtoneGeneration) return;
   const master = context.createGain();
   master.gain.value = 0.22;
   master.connect(context.destination);
@@ -211,6 +230,7 @@ export async function startIncomingCallRingtone() {
 }
 
 export function stopIncomingCallRingtone() {
+  ringtoneGeneration += 1;
   if (!activeRingtone) {
     navigator.vibrate?.(0);
     return;
