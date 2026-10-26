@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { BellRing, CalendarPlus, Check, ChevronLeft, ChevronRight, MessageSquareText, Sparkles, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { BellRing, CalendarPlus, Check, ChevronLeft, ChevronRight, MessageSquareText, Sparkles, Users, X } from "lucide-react";
 import { api } from "../lib/api";
 import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notifications";
 
@@ -39,11 +39,21 @@ const steps = [
   }
 ];
 
-export function OnboardingTutorial({ user, onComplete, onNavigate, onToast }) {
+export function OnboardingTutorial({ user, onComplete, onClose, onNavigate, onToast }) {
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const current = steps[step];
   const Icon = current.icon;
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        handleExit();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   async function enableAlerts() {
     try {
@@ -52,40 +62,83 @@ export function OnboardingTutorial({ user, onComplete, onNavigate, onToast }) {
     } catch (error) { onToast(error.message); }
   }
 
+  function handleExit() {
+    if (onClose) onClose();
+    else onComplete?.(user?.onboarding_completed_at || new Date().toISOString());
+  }
+
+  async function handleSkip() {
+    setBusy(true);
+    try {
+      const result = await api("/onboarding/complete", { method: "POST" });
+      onComplete?.(result?.onboarding_completed_at || new Date().toISOString());
+    } catch {
+      onComplete?.(user?.onboarding_completed_at || new Date().toISOString());
+    } finally {
+      setBusy(false);
+      if (onClose) onClose();
+    }
+  }
+
   async function finish(view) {
     setBusy(true);
     try {
       const result = await api("/onboarding/complete", { method: "POST" });
-      onComplete(result.onboarding_completed_at);
-      if (view) onNavigate(view);
-    } catch (error) { onToast(error.message); }
-    finally { setBusy(false); }
+      onComplete?.(result?.onboarding_completed_at || new Date().toISOString());
+      if (view) onNavigate?.(view);
+    } catch (error) {
+      onComplete?.(user?.onboarding_completed_at || new Date().toISOString());
+      if (view) onNavigate?.(view);
+    } finally {
+      setBusy(false);
+      if (onClose) onClose();
+    }
   }
 
   function useAction() {
     if (current.view) finish(current.view);
   }
 
-  return <div className="onboarding-backdrop" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-    <section className="onboarding-card">
-      <aside className="onboarding-rail">
-        <span className="onboarding-logo"><Sparkles size={21} /></span>
-        <div><b>Welcome, {user.display_name || user.full_name}</b><small>Let’s get you comfortable with your new workspace.</small></div>
-        <nav>{steps.map((item, index) => <span className={index === step ? "active" : index < step ? "complete" : ""} key={item.title}>{index < step ? <Check size={13} /> : index + 1}<small>{item.eyebrow.split(" ")[0]}</small></span>)}</nav>
-      </aside>
-      <main className="onboarding-content">
-        <span className="onboarding-step-icon"><Icon size={29} /></span>
-        <span className="eyebrow">{current.eyebrow}</span>
-        <h1 id="onboarding-title">{current.title}</h1>
-        <p>{current.description}</p>
-        <div className="onboarding-points">{current.points.map((point) => <div key={point}><Check size={15} /><span>{point}</span></div>)}</div>
-        {current.notificationAction && <button className="button button-primary onboarding-action" onClick={enableAlerts} disabled={!notificationsSupported() || notificationsEnabled()}><BellRing size={16} /> {notificationsEnabled() ? "Notifications enabled" : "Enable notifications"}</button>}
-        {current.action && <button className="button button-secondary onboarding-action" onClick={useAction} disabled={busy}>{current.action}</button>}
-        <footer>
-          <button className="tutorial-skip" onClick={() => finish()} disabled={busy}>Skip tutorial</button>
-          <span><button className="button button-secondary" onClick={() => setStep((value) => value - 1)} disabled={step === 0 || busy}><ChevronLeft size={16} /> Back</button>{step < steps.length - 1 ? <button className="button button-primary" onClick={() => setStep((value) => value + 1)}>Next <ChevronRight size={16} /></button> : <button className="button button-primary" onClick={() => finish()} disabled={busy}><Users size={16} /> {busy ? "Finishing…" : "Start working"}</button>}</span>
-        </footer>
-      </main>
-    </section>
-  </div>;
+  return (
+    <div
+      className="onboarding-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="onboarding-title"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) handleExit();
+      }}
+    >
+      <section className="onboarding-card">
+        <button
+          type="button"
+          className="onboarding-close-button"
+          onClick={handleExit}
+          title="Exit tutorial"
+          aria-label="Exit tutorial"
+        >
+          <X size={15} />
+          <span>Exit</span>
+        </button>
+        <aside className="onboarding-rail">
+          <span className="onboarding-logo"><Sparkles size={21} /></span>
+          <div><b>Welcome, {user.display_name || user.full_name}</b><small>Let’s get you comfortable with your new workspace.</small></div>
+          <nav>{steps.map((item, index) => <span className={index === step ? "active" : index < step ? "complete" : ""} key={item.title}>{index < step ? <Check size={13} /> : index + 1}<small>{item.eyebrow.split(" ")[0]}</small></span>)}</nav>
+        </aside>
+        <main className="onboarding-content">
+          <span className="onboarding-step-icon"><Icon size={29} /></span>
+          <span className="eyebrow">{current.eyebrow}</span>
+          <h1 id="onboarding-title">{current.title}</h1>
+          <p>{current.description}</p>
+          <div className="onboarding-points">{current.points.map((point) => <div key={point}><Check size={15} /><span>{point}</span></div>)}</div>
+          {current.notificationAction && <button className="button button-primary onboarding-action" onClick={enableAlerts} disabled={!notificationsSupported() || notificationsEnabled()}><BellRing size={16} /> {notificationsEnabled() ? "Notifications enabled" : "Enable notifications"}</button>}
+          {current.action && <button className="button button-secondary onboarding-action" onClick={useAction} disabled={busy}>{current.action}</button>}
+          <footer>
+            <button type="button" className="tutorial-skip" onClick={handleSkip} disabled={busy}>Skip tutorial</button>
+            <span><button type="button" className="button button-secondary" onClick={() => setStep((value) => value - 1)} disabled={step === 0 || busy}><ChevronLeft size={16} /> Back</button>{step < steps.length - 1 ? <button type="button" className="button button-primary" onClick={() => setStep((value) => value + 1)}>Next <ChevronRight size={16} /></button> : <button type="button" className="button button-primary" onClick={() => finish()} disabled={busy}><Users size={16} /> {busy ? "Finishing…" : "Start working"}</button>}</span>
+          </footer>
+        </main>
+      </section>
+    </div>
+  );
 }

@@ -27,7 +27,7 @@ function normalizeOrigin(value) {
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-dotenv.config({ path: path.join(root, ".env") });
+dotenv.config({ path: [path.join(root, ".env.local"), path.join(root, ".env")] });
 
 const configuredClientUrls = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "")
   .split(",")
@@ -61,14 +61,6 @@ export const config = {
   provisioning: {
     token: process.env.HRMS_PROVISIONING_TOKEN || "",
     organizationId: process.env.HRMS_PROVISIONING_ORGANIZATION_ID || "",
-  },
-  ai: {
-    apiKey: process.env.OPENAI_API_KEY || "",
-    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-  },
-  hrms: {
-    agentUrl: String(process.env.HRMS_AGENT_URL || "").replace(/\/+$/, ""),
-    agentToken: process.env.HRMS_AGENT_TOKEN || "",
   },
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY,

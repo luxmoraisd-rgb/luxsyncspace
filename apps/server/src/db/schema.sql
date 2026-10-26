@@ -43,6 +43,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_email BOOLEAN NOT NULL DEFAULT F
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ DEFAULT NOW();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_org_employee_id ON users(organization_id, employee_id) WHERE employee_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id, full_name);
+WITH employee_sequences AS (
+  SELECT organization_id,
+         COALESCE(MAX(NULLIF(regexp_replace(employee_id, '\D', '', 'g'), '')::int), 1000) AS max_id
+  FROM users
+  GROUP BY organization_id
+),
+missing_employee_ids AS (
+  SELECT u.id,
+         sequence.max_id + ROW_NUMBER() OVER (
+           PARTITION BY u.organization_id
+           ORDER BY u.created_at, u.id
+         ) AS generated_id
+  FROM users u
+  JOIN employee_sequences sequence ON sequence.organization_id = u.organization_id
+  WHERE u.employee_id IS NULL OR btrim(u.employee_id) = ''
+)
+UPDATE users u
+SET employee_id = 'LUX-' || LPAD(missing.generated_id::text, 4, '0')
+FROM missing_employee_ids missing
+WHERE u.id = missing.id;
 
 CREATE TABLE IF NOT EXISTS mail_threads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -133,27 +153,6 @@ CREATE TABLE IF NOT EXISTS announcements (
 );
 
 CREATE INDEX IF NOT EXISTS idx_announcements_org_published ON announcements(organization_id, published_at DESC);
-
-CREATE TABLE IF NOT EXISTS admin_agent_tasks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  command TEXT NOT NULL,
-  action TEXT NOT NULL,
-  arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
-  summary TEXT NOT NULL,
-  risk TEXT NOT NULL DEFAULT 'low' CHECK (risk IN ('low','medium','high')),
-  requires_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
-  status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','running','completed','failed','cancelled')),
-  result JSONB,
-  error TEXT,
-  planner TEXT NOT NULL DEFAULT 'built-in',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  started_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_admin_agent_tasks_org_created
-  ON admin_agent_tasks(organization_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS channel_members (
   channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

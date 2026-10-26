@@ -6,3 +6,22 @@ dist/
 coverage/
 *.log
 
+
+# Ignore all environment files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Allow safe example files
+!.env.example
+!**/.env.example
+
+# Local secrets and private configuration
+*.pem
+*.key
+
+# Dependencies and generated files
+node_modules/
+dist/
+build/

@@ -61,15 +61,25 @@ self.addEventListener("notificationclick", (event) => {
     );
     return;
   }
+  const callAccepted = isCall && event.action === "accept";
   const targetUrl = event.notification.data?.url || "/";
+  const callUrl = callAccepted
+    ? `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}join=1`
+    : targetUrl;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      if (callAccepted) {
+        clients.forEach((client) => client.postMessage({
+          type: "luxsyncspace:call-accepted",
+          meetingId: event.notification.data?.meetingId
+        }));
+      }
       const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
       if (existing) {
-        existing.navigate(targetUrl);
+        existing.navigate(callUrl);
         return existing.focus();
       }
-      return self.clients.openWindow(targetUrl);
+      return self.clients.openWindow(callUrl);
     })
   );
 });
