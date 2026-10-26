@@ -130,6 +130,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_one_pending
 CREATE INDEX IF NOT EXISTS idx_password_reset_org_status
   ON password_reset_requests(organization_id, status, requested_at DESC);
 
+CREATE TABLE IF NOT EXISTS password_reset_otps (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  otp_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_otps_expiry ON password_reset_otps(expires_at);
+
 CREATE TABLE IF NOT EXISTS support_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

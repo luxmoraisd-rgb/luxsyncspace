@@ -138,7 +138,8 @@ io.on("connection", (socket) => {
           END AS profile_full_name,
           profile.title AS profile_title,
           profile.initials AS profile_initials,
-          profile.avatar_color AS profile_avatar_color
+          profile.avatar_color AS profile_avatar_color,
+          profile.availability_status AS profile_availability_status
         FROM events AS event
         JOIN users AS profile ON profile.id = ${socket.auth.userId}
         WHERE event.id = ${roomId}
@@ -173,6 +174,19 @@ io.on("connection", (socket) => {
         WHERE event_id = ${meeting.id} AND user_id <> ${meeting.organizer_id}
       `;
       const attendeeIds = new Set(attendeeRows.map((attendee) => attendee.user_id));
+      if (!socket.meetingRoom) {
+        socket.data.meetingPreviousAvailabilityStatus = joinData.profile_availability_status;
+      }
+      const [updatedPresence] = await sql`
+        UPDATE users SET availability_status = 'meeting'
+        WHERE id = ${socket.auth.userId} AND organization_id = ${socket.auth.organizationId}
+          AND availability_status <> 'meeting'
+        RETURNING id, presence, availability_status
+      `;
+      if (updatedPresence) {
+        invalidateCache(`people:${socket.auth.organizationId}`);
+        io.to(`org:${socket.auth.organizationId}`).emit("presence:updated", updatedPresence);
+      }
       socket.meetingRoom = room;
       socket.data.meetingProfile = profile;
       socket.join(room);
@@ -237,6 +251,21 @@ io.on("connection", (socket) => {
     socket.data.meetingProfile = null;
 
     try {
+      const previousAvailabilityStatus = socket.data.meetingPreviousAvailabilityStatus;
+      socket.data.meetingPreviousAvailabilityStatus = null;
+      if (previousAvailabilityStatus) {
+        const [updatedPresence] = await sql`
+          UPDATE users SET availability_status = ${previousAvailabilityStatus}
+          WHERE id = ${socket.auth.userId} AND organization_id = ${socket.auth.organizationId}
+            AND availability_status = 'meeting'
+          RETURNING id, presence, availability_status
+        `;
+        if (updatedPresence) {
+          invalidateCache(`people:${socket.auth.organizationId}`);
+          io.to(`org:${socket.auth.organizationId}`).emit("presence:updated", updatedPresence);
+        }
+      }
+
       const roomId = room.replace("meeting:", "");
       const remainingSockets = await io.in(room).fetchSockets();
       const remainingProfiles = remainingSockets.filter((s) => s.data.meetingProfile);

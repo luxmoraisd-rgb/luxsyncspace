@@ -114,7 +114,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE c.organization_id = ${organizationId}
           ORDER BY c.name
         `).then((memberships) => memberships.filter((membership) => membership.user_id === userId)),
-      cached(`events:${organizationId}`, 15_000, () => sql`SELECT e.*,
+      cached(`events:${organizationId}:${userId}`, 15_000, () => sql`SELECT e.*,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS organizer_name,
              COALESCE(json_agg(json_build_object('id', a.id, 'name', CASE WHEN a.hide_full_name THEN COALESCE(NULLIF(a.display_name, ''), 'Team member') ELSE a.full_name END, 'initials', a.initials, 'color', a.avatar_color))
                FILTER (WHERE a.id IS NOT NULL), '[]') AS attendees
@@ -125,6 +125,10 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE e.organization_id = ${organizationId}
             AND e.starts_at >= date_trunc('day', NOW()) - INTERVAL '1 day'
             AND e.starts_at < date_trunc('day', NOW()) + INTERVAL '14 days'
+            AND (e.organizer_id = ${userId} OR EXISTS (
+              SELECT 1 FROM event_attendees viewer_attendee
+              WHERE viewer_attendee.event_id = e.id AND viewer_attendee.user_id = ${userId}
+            ))
           GROUP BY e.id, u.full_name, u.hide_full_name, u.display_name ORDER BY e.starts_at`)
       ,
       cached(`announcements:${organizationId}`, 30_000, () => sql`SELECT a.id, a.title, a.body, a.priority, a.published_at,
