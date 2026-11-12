@@ -32,29 +32,45 @@ const [org] = await sql`
 `;
 
 const passwordHash = await bcrypt.hash(config.adminPassword, 12);
-const [admin] = await sql`
-  INSERT INTO users (
-    organization_id, employee_id, email, password_hash, full_name, title, department, role,
-    initials, avatar_color, presence, phone, location, bio, joined_at, must_change_password
-  )
-  VALUES (
-    ${org.id}, 'LUX-0001', ${config.adminEmail}, ${passwordHash}, 'Luxmor Administrator',
-    'Workspace Administrator', 'Administration', 'senior_leader', 'LA', '#2557D6', 'online',
-    '', 'India', 'LuxSyncspace organization administrator.', CURRENT_DATE, FALSE
-  )
-  ON CONFLICT (email) DO UPDATE SET
-    organization_id = EXCLUDED.organization_id,
-    employee_id = EXCLUDED.employee_id,
-    password_hash = EXCLUDED.password_hash,
-    full_name = EXCLUDED.full_name,
-    title = EXCLUDED.title,
-    department = EXCLUDED.department,
-    role = EXCLUDED.role,
-    initials = EXCLUDED.initials,
-    avatar_color = EXCLUDED.avatar_color,
-    must_change_password = FALSE
-  RETURNING id
+let [admin] = await sql`
+  SELECT id FROM users WHERE organization_id = ${org.id} AND employee_id = 'LUX-0001'
 `;
+
+if (admin) {
+  [admin] = await sql`
+    UPDATE users SET
+      organization_id = ${org.id},
+      email = ${config.adminEmail},
+      password_hash = ${passwordHash},
+      full_name = 'Luxmor Administrator',
+      title = 'Workspace Administrator',
+      department = 'Administration',
+      role = 'senior_leader',
+      initials = 'LA',
+      avatar_color = '#2557D6',
+      presence = 'online',
+      phone = '',
+      location = 'India',
+      bio = 'LuxSyncspace organization administrator.',
+      joined_at = CURRENT_DATE,
+      must_change_password = FALSE
+    WHERE id = ${admin.id}
+    RETURNING id
+  `;
+} else {
+  [admin] = await sql`
+    INSERT INTO users (
+      organization_id, employee_id, email, password_hash, full_name, title, department, role,
+      initials, avatar_color, presence, phone, location, bio, joined_at, must_change_password
+    )
+    VALUES (
+      ${org.id}, 'LUX-0001', ${config.adminEmail}, ${passwordHash}, 'Luxmor Administrator',
+      'Workspace Administrator', 'Administration', 'senior_leader', 'LA', '#2557D6', 'online',
+      '', 'India', 'LuxSyncspace organization administrator.', CURRENT_DATE, FALSE
+    )
+    RETURNING id
+  `;
+}
 
 const defaultChannels = [
   ["general", "Company-wide conversation and collaboration"],
