@@ -2,8 +2,11 @@ import { useEffect } from "react";
 import { Phone, PhoneOff, Video } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { startIncomingCallRingtone, stopIncomingCallRingtone } from "../lib/notifications";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function IncomingCall({ call, onAccept, onDecline }) {
+  useEscapeKey(onDecline, Boolean(call));
+
   useEffect(() => {
     if (!call) {
       stopIncomingCallRingtone();

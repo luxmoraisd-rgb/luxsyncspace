@@ -1,13 +1,42 @@
 import { useState } from "react";
-import { BookOpen, CheckCircle2, ExternalLink, LifeBuoy, Mail, Send, ShieldCheck } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, ChevronRight, ExternalLink, LifeBuoy, Mail, Send, ShieldCheck } from "lucide-react";
+import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
 
 const SUPPORT_EMAIL = "Luxmor.syncspace@luxmorai.com";
+
+const QUICK_HELP_TOPICS = [
+  {
+    title: "Account Access",
+    description: "Login assistance, password reset, account activation, and sign-in issues.",
+    icon: LifeBuoy,
+    sections: [
+      { title: "Login assistance", text: "Sign in with the work email address registered by your administrator and the password provided for your account." },
+      { title: "Password reset", text: "On the sign-in screen, choose Forgot password? and enter your registered work email. Use the six-digit verification code sent to your email to set a new password. If you cannot complete email verification, request an administrator reset." },
+      { title: "Account activation", text: "Your administrator creates your account and sends a temporary password to your work email. Sign in with that password and replace it when prompted. If you have not received it, ask your administrator to check your account and resend the invitation." },
+      { title: "Sign-in issues", text: "Check that you are using your registered work email and current password. If you have already replaced a temporary password, use the new one. Use Forgot password? to regain access, or contact your administrator if you remain unable to sign in." },
+    ],
+  },
+  {
+    title: "Using LuxSyncspace",
+    description: "Guides for chat, meetings, calendar, people, workspace, and notifications.",
+    icon: BookOpen,
+    sections: [
+      { title: "Chat", text: "Open Chat from the sidebar and select a direct conversation or group to read and send messages." },
+      { title: "Meetings", text: "Open Meetings to review scheduled meetings, join an upcoming meeting, or schedule a meeting with coworkers." },
+      { title: "Calendar", text: "Open Calendar to review your schedule or create an event and invite coworkers." },
+      { title: "People", text: "Open People to find coworkers and view their profiles and contact details." },
+      { title: "Workspace", text: "Use Home to catch up on workspace updates, and the sidebar to move between shared work areas." },
+      { title: "Notifications", text: "Open the notification bell to review updates and go to the related area. Manage message notification preferences in Settings under App & notifications." },
+    ],
+  },
+];
 
 export function HelpSupport({ user, onToast }) {
   const [form, setForm] = useState({ category: "Technical issue", subject: "", message: "" });
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [activeHelp, setActiveHelp] = useState(null);
 
   async function submit(event) {
     event.preventDefault();
@@ -47,11 +76,27 @@ export function HelpSupport({ user, onToast }) {
           </section>
           <section className="panel quick-help-card">
             <h2>Quick help</h2>
-            <div><LifeBuoy size={18} /><span><b>Account access</b><small>Temporary passwords and sign-in support</small></span></div>
-            <div><BookOpen size={18} /><span><b>Using LuxSyncspace</b><small>Chat, groups, calendar, and notifications</small></span></div>
+            {QUICK_HELP_TOPICS.map(({ title, description, icon: Icon, ...topic }) => (
+              <button key={title} type="button" className="quick-help-item" onClick={() => setActiveHelp({ title, description, ...topic })}>
+                <Icon size={18} aria-hidden="true" />
+                <span><b>{title}</b><small>{description}</small></span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+            ))}
           </section>
         </aside>
       </div>
+      {activeHelp && <Modal title={activeHelp.title} subtitle={activeHelp.description} onClose={() => setActiveHelp(null)}>
+        <div className="quick-help-details">
+          {activeHelp.sections.map((section) => (
+            <section key={section.title}>
+              <h3>{section.title}</h3>
+              <p>{section.text}</p>
+            </section>
+          ))}
+          <button type="button" className="button button-secondary" onClick={() => setActiveHelp(null)}><ArrowLeft size={16} /> Back to Quick Help</button>
+        </div>
+      </Modal>}
     </div>
   );
 }

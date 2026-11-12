@@ -1,5 +1,7 @@
 const TOKEN_KEY = "luxsyncspace_token";
 const LEGACY_TOKEN_KEY = "synapse_token";
+const NETWORK_ERROR_MESSAGE = "Unable to connect to the server. Please check your internet connection and try again.";
+const NETWORK_ERROR_PATTERN = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|getaddrinfo|failed to fetch|network error/i;
 const configuredApiUrl = String(import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 export const API_BASE = configuredApiUrl || "/api";
 export const SOCKET_URL = String(import.meta.env.VITE_SOCKET_URL || "").replace(/\/+$/, "") || undefined;
@@ -40,21 +42,28 @@ export const authStore = {
 
 export async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
-  const response = await fetch(apiUrl(path), {
-    ...options,
-    headers: {
-      ...(!isFormData ? { "Content-Type": "application/json" } : {}),
-      ...(authStore.get() ? { Authorization: `Bearer ${authStore.get()}` } : {}),
-      ...options.headers
-    }
-  });
+  let response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...options,
+      headers: {
+        ...(!isFormData ? { "Content-Type": "application/json" } : {}),
+        ...(authStore.get() ? { Authorization: `Bearer ${authStore.get()}` } : {}),
+        ...options.headers
+      }
+    });
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error(NETWORK_ERROR_MESSAGE);
+    throw error;
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && path !== "/auth/login") {
       authStore.clear();
       window.dispatchEvent(new CustomEvent("luxsyncspace:unauthorized"));
     }
-    throw new Error(payload.error || "Request failed");
+    const message = payload.error || "Request failed";
+    throw new Error(NETWORK_ERROR_PATTERN.test(message) ? NETWORK_ERROR_MESSAGE : message);
   }
   return payload;
 }

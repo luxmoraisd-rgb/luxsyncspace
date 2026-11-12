@@ -1,4 +1,5 @@
 import { sql } from "../db/client.js";
+import { invalidateCache } from "./cache.js";
 import { sendPushToUser } from "./push.js";
 
 export function startEventReminderScheduler(io) {
@@ -30,8 +31,30 @@ export function startEventReminderScheduler(io) {
           sendPushToUser(attendee.user_id, payload).catch(console.error);
         }
       }
+
+      const expiredEvents = await sql`
+        UPDATE events
+        SET ended_at = ends_at
+        WHERE ended_at IS NULL
+          AND cancelled_at IS NULL
+          AND is_online = TRUE
+          AND ends_at <= NOW()
+        RETURNING id, title, meeting_mode, organization_id, ended_at
+      `;
+      for (const event of expiredEvents) {
+        invalidateCache(`events:${event.organization_id}`);
+        const isCall = event.meeting_mode === "audio"
+          || (event.title || "").toLowerCase().includes("call")
+          || (event.title || "").includes(" and ");
+        io.to(`org:${event.organization_id}`).emit("event:ended", {
+          event_id: event.id,
+          ended_at: event.ended_at,
+          title: event.title,
+          isCall
+        });
+      }
     } catch (error) {
-      console.error("Event reminder check failed", error);
+      console.error("Event scheduler check failed", error);
     } finally {
       running = false;
     }
