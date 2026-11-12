@@ -1,6 +1,9 @@
 import { BellRing, X } from "lucide-react";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function InAppNotification({ notification, onOpen, onClose }) {
+  useEscapeKey(onClose, Boolean(notification));
+
   if (!notification) return null;
   return (
     <aside className="in-app-notification" role="status" aria-live="polite">

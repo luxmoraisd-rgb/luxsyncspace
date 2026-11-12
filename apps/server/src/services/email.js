@@ -5,6 +5,12 @@ const transporter = nodemailer.createTransport({
   host: config.smtp.host,
   port: config.smtp.port,
   secure: config.smtp.port === 465,
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 15_000,
   auth: {
     user: config.smtp.user,
     pass: config.smtp.password
@@ -109,6 +115,39 @@ export async function sendPasswordResetCompleted({ to, fullName, temporaryPasswo
             <p style="color:#6b7688;font-size:13px;line-height:1.5">Sign in with this temporary password. You will then be required to create a new private password.</p>
             <a href="${loginUrl}" style="display:inline-block;padding:13px 22px;border-radius:8px;background:#2557d6;color:#fff;text-decoration:none;font-weight:700">Sign in to ${config.appName}</a>
             <p style="margin-top:24px;color:#9aa3b1;font-size:11px">If you did not request this reset, contact your administrator immediately.</p>
+          </td></tr>
+        </table>
+      </td></tr></table></body></html>`
+  });
+}
+
+export async function sendPasswordResetCode({ to, fullName, code }) {
+  if (!config.smtp.host || !config.smtp.user || !config.smtp.password || !config.smtp.fromEmail) {
+    throw new Error("Email delivery is not configured");
+  }
+
+  const safeName = escapeHtml(fullName);
+  const safeCode = escapeHtml(code);
+  await transporter.sendMail({
+    from: `"${config.appName}" <${config.smtp.fromEmail}>`,
+    to,
+    subject: `Your ${config.appName} password reset code`,
+    text: [
+      `Hello ${fullName},`,
+      "",
+      `Your password reset verification code is ${code}.`,
+      "This code expires in 10 minutes and can only be used once.",
+      "If you did not request this code, you can ignore this email."
+    ].join("\n"),
+    html: `<!doctype html><html><body style="margin:0;padding:32px;background:#f4f6fa;font-family:Arial,sans-serif;color:#172033">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center">
+        <table role="presentation" width="520" cellspacing="0" cellpadding="0" style="max-width:100%;background:#fff;border:1px solid #e2e7ef;border-radius:14px;overflow:hidden">
+          <tr><td style="height:5px;background:#2557d6"></td></tr>
+          <tr><td style="padding:30px"><p style="color:#2557d6;font-size:12px;font-weight:700;letter-spacing:1px">PASSWORD RESET</p>
+            <h1 style="font-size:23px">Hello, ${safeName}</h1>
+            <p style="color:#5f6c80;line-height:1.6">Enter this verification code to reset your ${config.appName} password.</p>
+            <p style="padding:18px;background:#f4f7fc;border-radius:9px;text-align:center;font-family:monospace;font-size:30px;font-weight:700;letter-spacing:8px">${safeCode}</p>
+            <p style="color:#6b7688;font-size:13px;line-height:1.5">This code expires in 10 minutes and can only be used once. If you did not request it, ignore this email.</p>
           </td></tr>
         </table>
       </td></tr></table></body></html>`
