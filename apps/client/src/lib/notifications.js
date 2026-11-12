@@ -43,18 +43,18 @@ export async function enableNotifications() {
       ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
       : "Allow notifications in the browser prompt to enable alerts.");
   }
-  const { publicKey } = await api("/push/config");
-  if (!publicKey) throw new Error("Push notifications are not configured on the server");
-
   localStorage.setItem(ENABLED_KEY, "true");
+  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   try {
+    const { publicKey } = await api("/push/config");
+    if (!publicKey) throw new Error("Push notifications are not configured on the server");
     await refreshNotificationSubscription(publicKey);
   } catch (error) {
     localStorage.setItem(ENABLED_KEY, "false");
+    window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
     throw error;
   }
   await playNotificationSound();
-  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   return true;
 }
 
@@ -127,6 +127,8 @@ export async function dismissIncomingCallNotification(meetingId) {
 }
 
 export async function disableNotifications() {
+  localStorage.setItem(ENABLED_KEY, "false");
+  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   const registration = await navigator.serviceWorker.getRegistration();
   const subscription = await registration?.pushManager.getSubscription();
   if (subscription) {
@@ -136,8 +138,6 @@ export async function disableNotifications() {
     });
     await subscription.unsubscribe();
   }
-  localStorage.setItem(ENABLED_KEY, "false");
-  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
 }
 
 function urlBase64ToUint8Array(value) {

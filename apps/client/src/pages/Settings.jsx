@@ -38,7 +38,7 @@ function appIsInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
-export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial, onChangePassword }) {
+export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -79,6 +79,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       window.removeEventListener("luxsyncspace:installed", installed);
       displayMode.removeEventListener?.("change", updateDisplayMode);
     };
+  }, []);
+
+  useEffect(() => {
+    const syncNotifications = () => setNotificationsOn(notificationsEnabled());
+    window.addEventListener("luxsyncspace:notifications-changed", syncNotifications);
+    return () => window.removeEventListener("luxsyncspace:notifications-changed", syncNotifications);
   }, []);
 
   useEffect(() => {
@@ -144,17 +150,20 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   }
 
   async function turnOnNotifications() {
+    setNotificationsOn(true);
     try {
       await enableNotifications();
-      setNotificationsOn(true);
       onToast("Notifications and the LuxSyncspace sound are enabled");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      setNotificationsOn(false);
+      onToast(error.message);
+    }
   }
 
   async function turnOffNotifications() {
+    setNotificationsOn(false);
     try {
       await disableNotifications();
-      setNotificationsOn(false);
       onToast("Notifications disabled on this device");
     } catch (error) { onToast(error.message); }
   }
@@ -181,9 +190,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     setBusy(true);
     try {
       const result = await api("/invitations", { method: "POST", body: JSON.stringify(invite) });
-      await onRefresh();
       setInvite(emptyInvite());
       onToast(result.message || "Employee invitation email sent");
+      onRefresh().catch((error) => console.error("Could not refresh workspace after inviting employee", error));
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }
   }
@@ -209,12 +218,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     setBusy(true);
     try {
       const result = await api(`/employees/${selected.id}`, { method: "PATCH", body: JSON.stringify(editing) });
-      setSelected(result.employee);
+      onEmployeeUpdate?.(result.employee);
+      setSelected(null);
       setEditing(null);
       if (onUserUpdate && (selected.id === user.id || result.employee?.id === user.id)) {
         onUserUpdate(result.employee);
       }
-      await onRefresh();
       onToast(result.message || "Employee details updated");
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }

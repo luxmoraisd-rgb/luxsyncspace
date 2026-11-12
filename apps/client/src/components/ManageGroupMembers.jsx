@@ -43,14 +43,14 @@ export function ManageGroupMembers({ channel, people, members, currentUserId, ca
             <span><UserMinus size={14} /> {removedCount} to remove</span>
           </div>}
           <label className="group-member-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" /></label>
-          <div className="group-member-list member-manager-list">
+          <div className="group-member-list member-manager-list" style={{ overflowX: "hidden", display: "flex", flexDirection: "column", width: "100%", boxSizing: "border-box" }}>
             {filtered.map((person) => {
               const checked = canManage ? memberIds.includes(person.id) : true;
               const isSelf = person.id === currentUserId;
-              return <button type="button" className={checked ? "selected" : ""} disabled={!canManage || isSelf} onClick={() => toggle(person.id)} key={person.id}>
+              return <button type="button" className={checked ? "selected" : ""} disabled={!canManage || isSelf} onClick={() => toggle(person.id)} key={person.id} style={{ display: "grid", gridTemplateColumns: "32px minmax(0, 1fr) auto", width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
                 <Avatar person={person} size="xs" />
-                <span><b>{person.full_name}</b><small>{person.title} · {person.department}{isSelf ? " · You" : ""}</small></span>
-                <em className={`member-action ${!canManage || isSelf ? "required" : checked ? "remove" : "add"}`}>
+                <span style={{ minWidth: 0, overflow: "hidden" }}><b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.full_name}</b><small style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{person.title} · {person.department}{isSelf ? " · You" : ""}</small></span>
+                <em className={`member-action ${!canManage || isSelf ? "required" : checked ? "remove" : "add"}`} style={{ flexShrink: 0, whiteSpace: "nowrap" }}>
                   {!canManage ? "Member" : isSelf ? "Required" : checked ? <><UserMinus size={14} /> Remove</> : <><UserPlus size={14} /> Add</>}
                 </em>
               </button>;

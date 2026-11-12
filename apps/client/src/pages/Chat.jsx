@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -7,6 +7,7 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 
@@ -47,9 +48,18 @@ function computeOptimisticReactions(currentReactions = [], emoji) {
   return list;
 }
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
+function formatGroupCreatedDate(value) {
+  if (!value) return "Unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" }).format(date);
+}
+
+export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onSelectConversation, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
+  const appliedInitialChannelRef = useRef(channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
+  const appliedInitialPersonRef = useRef(selectedPerson?.id || null);
   const [messages, setMessages] = useState([]);
   const [latestDirectMessages, setLatestDirectMessages] = useState(directConversationTimes);
   const [message, setMessage] = useState("");
@@ -61,9 +71,11 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachment, setAttachment] = useState(null);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
+  const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
   const [channelMembers, setChannelMembers] = useState([]);
   const [channelMuted, setChannelMutedState] = useState(() => channels.find((channel) => channel.id === initialChannelId)?.muted || false);
@@ -80,6 +92,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const endRef = useRef();
   const textareaRef = useRef();
   const fileInputRef = useRef();
+  const photoInputRef = useRef();
+  const attachmentButtonRef = useRef(null);
+  const attachmentMenuRef = useRef(null);
   const emojiPickerRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
@@ -100,35 +115,56 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
+  useEscapeKey(() => {
+    if (fullPickerMessageId !== null) setFullPickerMessageId(null);
+    else if (reactionMessageId !== null) setReactionMessageId(null);
+    else if (messageMenuId !== null) setMessageMenuId(null);
+    else if (moreOpen) setMoreOpen(false);
+    else if (attachmentMenuOpen) setAttachmentMenuOpen(false);
+    else if (emojiOpen) setEmojiOpen(false);
+    else if (mentionQuery) setMentionQuery(null);
+    else if (messageSearchOpen) {
+      setMessageSearchOpen(false);
+      setMessageSearch("");
+    }
+  }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || attachmentMenuOpen || emojiOpen || mentionQuery || messageSearchOpen));
+
   function openChannel(channelId) {
     setSelected(channelId);
     setSelectedPerson(null);
+    appliedInitialChannelRef.current = channelId;
+    appliedInitialPersonRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.set("view", "chat");
     url.searchParams.set("channel", channelId);
     url.searchParams.delete("direct");
     window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "channel" }, "", url);
+    onSelectConversation?.({ channel: channelId, direct: null });
   }
 
   function openPerson(person) {
     setSelected(null);
     setSelectedPerson(person);
+    appliedInitialChannelRef.current = null;
+    appliedInitialPersonRef.current = person.id;
     const url = new URL(window.location.href);
     url.searchParams.set("view", "chat");
     url.searchParams.set("direct", person.id);
     url.searchParams.delete("channel");
     window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "direct" }, "", url);
+    onSelectConversation?.({ channel: null, direct: person.id });
   }
 
-  function closeConversation(useHistory = true) {
-    const params = new URLSearchParams(window.location.search);
-    if (useHistory && (params.has("channel") || params.has("direct"))) return window.history.back();
+  function closeConversation() {
     setSelected(null);
     setSelectedPerson(null);
+    appliedInitialChannelRef.current = null;
+    appliedInitialPersonRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
     url.searchParams.delete("direct");
-    window.history.replaceState({ luxsyncspace: true, view: "chat" }, "", url);
+    window.history.pushState({ luxsyncspace: true, view: "chat" }, "", url);
+    onSelectConversation?.({ channel: null, direct: null });
   }
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
@@ -154,6 +190,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
+    setGroupDetailsOpen(false);
     setMessageMenuId(null);
     setReactionMessageId(null);
     setFullPickerMessageId(null);
@@ -193,6 +230,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       }
 
       if (
+        attachmentMenuOpen &&
+        !attachmentButtonRef.current?.contains(event.target) &&
+        !attachmentMenuRef.current?.contains(event.target)
+      ) {
+        setAttachmentMenuOpen(false);
+      }
+
+      if (
         messageMenuRef.current &&
         !messageMenuRef.current.contains(event.target)
       ) {
@@ -213,7 +258,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, []);
+  }, [attachmentMenuOpen]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -339,25 +384,44 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       const params = new URLSearchParams(window.location.search);
       const channelId = params.get("channel");
       const personId = params.get("direct");
-      setSelected(channels.some((channel) => channel.id === channelId) ? channelId : null);
-      setSelectedPerson(people.find((person) => person.id === personId) || null);
+      const matchedChannel = channels.some((channel) => channel.id === channelId) ? channelId : null;
+      const matchedPerson = people.find((person) => person.id === personId) || null;
+      setSelected(matchedChannel);
+      setSelectedPerson(matchedPerson);
+      appliedInitialChannelRef.current = matchedChannel;
+      appliedInitialPersonRef.current = matchedPerson?.id || null;
+      onSelectConversation?.({ channel: matchedChannel, direct: matchedPerson?.id || null });
     };
     window.addEventListener("popstate", syncConversation);
     return () => window.removeEventListener("popstate", syncConversation);
-  }, [channels, people]);
+  }, [channels, people, onSelectConversation]);
 
   useEffect(() => {
-    if (initialChannelId && channels.some((channel) => channel.id === initialChannelId)) {
-      setSelected(initialChannelId);
-      setSelectedPerson(null);
-    } else if (initialPersonId) {
+    if (initialChannelId && (initialChannelId !== appliedInitialChannelRef.current || selected !== initialChannelId)) {
+      if (channels.some((channel) => channel.id === initialChannelId)) {
+        appliedInitialChannelRef.current = initialChannelId;
+        appliedInitialPersonRef.current = null;
+        setSelected(initialChannelId);
+        setSelectedPerson(null);
+      }
+    } else if (initialPersonId && (initialPersonId !== appliedInitialPersonRef.current || selectedPerson?.id !== initialPersonId)) {
       const targetPerson = people.find((person) => person.id === initialPersonId);
       if (targetPerson) {
+        appliedInitialPersonRef.current = initialPersonId;
+        appliedInitialChannelRef.current = null;
         setSelected(null);
         setSelectedPerson(targetPerson);
       }
     }
-  }, [initialChannelId, initialPersonId, channels, people]);
+  }, [initialChannelId, initialPersonId, channels, people, selected, selectedPerson?.id]);
+
+  useEffect(() => {
+    if (selected && channels.length > 0 && !channels.some((channel) => channel.id === selected)) {
+      setSelected(null);
+      appliedInitialChannelRef.current = null;
+      onSelectConversation?.({ channel: null, direct: selectedPerson?.id || null });
+    }
+  }, [channels, selected, onSelectConversation, selectedPerson?.id]);
 
   useEffect(() => {
     const markReadWhenVisible = () => {
@@ -612,6 +676,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   function chooseFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
+    if (file && event.currentTarget === photoInputRef.current) {
+      const allowedTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+      if (!/\.(jpe?g|png|gif|webp)$/i.test(file.name) || (file.type && !allowedTypes.has(file.type))) {
+        onToast("Photos must be JPG, JPEG, PNG, GIF, or WEBP images");
+        return;
+      }
+    }
     void uploadAttachment(file);
   }
 
@@ -758,7 +829,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
           <nav className="chat-nav">
             <button className={!selected && !selectedPerson ? "active" : ""} onClick={() => closeConversation()}><Users size={18} /> All employees <b>{people.length}</b></button>
           </nav>
-          <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
+          <div className="channel-heading"><span>GROUPS & CHANNELS</span></div>
           <nav className="channels">
             {channels.map((channel) => <button key={channel.id} onClick={() => openChannel(channel.id)} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
           </nav>
@@ -813,11 +884,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p>{selectedPerson && <small className="conversation-employee-id">Employee ID: {employeeIdLabel(selectedPerson)}</small>}</span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
-              {selected && <button className="members-button" onClick={() => setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               {!selectedPerson && <>
-                <button className="icon-button"><Bell size={19} /></button>
-                <button className="icon-button"><Info size={19} /></button>
+                <button className="icon-button" onClick={() => setGroupDetailsOpen(true)} title="Group details" aria-label="Group details"><Info size={19} /></button>
               </>}
             </div>
           </header>
@@ -941,10 +1010,15 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
               } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
             }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
+            <input ref={photoInputRef} className="composer-file-input" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp" onChange={chooseFile} />
             <div className="composer-toolbar"><span>
-              <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
+              <button ref={attachmentButtonRef} type="button" className={uploading ? "tool-busy" : attachmentMenuOpen ? "active" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
               <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
+            {attachmentMenuOpen && <div ref={attachmentMenuRef} role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
+              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Upload from This Device</button>
+              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Photos</button>
+            </div>}
             {emojiOpen &&
               <div
                 ref={emojiPickerRef}
@@ -963,7 +1037,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         <div className="details-channel-icon"><Hash size={25} /></div>
         <h3>{activeChannel?.name}</h3><p>{activeChannel?.description}</p>
         <div className="detail-actions">
-          <button className={channelMuted ? "active" : ""} onClick={toggleMute}><Bell size={18} /><span>{channelMuted ? "Unmute" : "Mute"}</span></button>
+          <button className={channelMuted ? "active" : ""} onClick={toggleMute}>{channelMuted ? <BellOff size={18} /> : <Bell size={18} />}<span>{channelMuted ? "Unmute" : "Mute"}</span></button>
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
           <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
             {moreOpen && <div className="channel-more-menu">
@@ -987,6 +1061,26 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} canManage={canCreateGroup} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
+      {groupDetailsOpen && selected && activeChannel && <Modal title="Group details" subtitle={activeChannel.name} onClose={() => setGroupDetailsOpen(false)}>
+        <div className="group-details-content">
+          <div className="group-details-facts">
+            <div><span>Group Name</span><strong>{activeChannel.name}</strong></div>
+            <div><span>Created Date</span><strong>{formatGroupCreatedDate(activeChannel.created_at)}</strong></div>
+            <div><span>Total Members</span><strong>{channelMembers.length}</strong></div>
+            <div><span>Group Type</span><strong>{activeChannel.is_private ? "Private" : "Public"}</strong></div>
+          </div>
+          <section className="group-details-description">
+            <h3>Description</h3>
+            <p>{activeChannel.description || "No group description has been added."}</p>
+          </section>
+          <section className="group-details-member-section" aria-label="Group members">
+            <h3><Users size={16} /> Members</h3>
+            {channelMembers.length ? <div className="group-details-members">
+              {channelMembers.map((person) => <div key={person.id}><Avatar person={person} size="sm" showPresence /><span><b>{person.full_name}</b><small>{person.title || person.department || "Member"}</small></span></div>)}
+            </div> : <p className="group-details-empty">No members found.</p>}
+          </section>
+        </div>
+      </Modal>}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
       {deleteGroupOpen && activeChannel && <Modal title="Delete group" subtitle={`Permanently remove #${activeChannel.name}`} onClose={() => setDeleteGroupOpen(false)}>
         <div className="delete-confirm"><span><Trash2 size={24} /></span><h3>Delete #{activeChannel.name}?</h3><p>All messages, attachments, and membership records in this group will be permanently deleted. This cannot be recovered.</p><footer><button className="button button-secondary" onClick={() => setDeleteGroupOpen(false)}>Cancel</button><button className="button button-danger" onClick={deleteGroup}><Trash2 size={16} /> Delete group</button></footer></div>

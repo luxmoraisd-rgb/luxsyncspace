@@ -4,12 +4,14 @@ import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { Modal } from "../components/Modal";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onAddAttendees, onToast }) {
   const [instantOpen, setInstantOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [peopleTarget, setPeopleTarget] = useState(null);
   const cancelDialogRef = useRef(null);
+  useEscapeKey(() => cancelDialogRef.current?.close(), Boolean(cancelTarget));
   const scheduled = events.filter((event) => event.cancelled_at || event.ended_at || new Date(event.ends_at) > new Date());
   const upcoming = scheduled.filter((event) => !event.cancelled_at && !event.ended_at);
 

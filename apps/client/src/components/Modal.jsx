@@ -1,6 +1,9 @@
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { X } from "lucide-react";
 
 export function Modal({ title, subtitle, children, onClose, wide = false, className = "" }) {
+  useEscapeKey(onClose);
+
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={`modal ${wide ? "modal-wide" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title}>

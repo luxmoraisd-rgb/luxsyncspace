@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { BellRing, CalendarPlus, Check, ChevronLeft, ChevronRight, MessageSquareText, Sparkles, Users, X } from "lucide-react";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notifications";
 
 const steps = [
@@ -45,16 +46,6 @@ export function OnboardingTutorial({ user, onComplete, onClose, onNavigate, onTo
   const current = steps[step];
   const Icon = current.icon;
 
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        handleExit();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
   async function enableAlerts() {
     try {
       await enableNotifications();
@@ -66,6 +57,8 @@ export function OnboardingTutorial({ user, onComplete, onClose, onNavigate, onTo
     if (onClose) onClose();
     else onComplete?.(user?.onboarding_completed_at || new Date().toISOString());
   }
+
+  useEscapeKey(handleExit);
 
   async function handleSkip() {
     setBusy(true);

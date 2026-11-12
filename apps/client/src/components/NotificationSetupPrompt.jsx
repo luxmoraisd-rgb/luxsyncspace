@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { BellRing, ExternalLink, X } from "lucide-react";
 import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notifications";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function NotificationSetupPrompt({ onToast }) {
   const [visible, setVisible] = useState(() => notificationsSupported() && !notificationsEnabled());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEscapeKey(() => setVisible(false), visible && !busy);
 
   useEffect(() => {
     const sync = () => setVisible(notificationsSupported() && !notificationsEnabled());

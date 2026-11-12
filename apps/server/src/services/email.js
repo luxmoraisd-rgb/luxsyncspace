@@ -5,6 +5,12 @@ const transporter = nodemailer.createTransport({
   host: config.smtp.host,
   port: config.smtp.port,
   secure: config.smtp.port === 465,
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 15_000,
   auth: {
     user: config.smtp.user,
     pass: config.smtp.password

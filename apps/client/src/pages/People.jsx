@@ -1,8 +1,9 @@
 import { Building2, Check, Copy, Grid2X2, List, MessageSquareText, MoreHorizontal, Pencil, Search, SlidersHorizontal, UserCheck, UserMinus, UserPlus, Users, UserX } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function People({ user, people, onStartChat, onInvite, onManage, onRefresh, onToast }) {
   const [query, setQuery] = useState("");
@@ -11,8 +12,11 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const [viewMode, setViewMode] = useState("grid");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuId, setMenuId] = useState(null);
+  const [menuOpensUp, setMenuOpensUp] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [busy, setBusy] = useState(false);
+  const peopleFilterRef = useRef(null);
+  const personMenuRef = useRef(null);
   const departments = ["All", ...new Set(people.map((p) => p.department))];
   const filtered = useMemo(() => people.filter((person) =>
     (department === "All" || person.department === department) &&
@@ -22,6 +26,38 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canManageEmployment = ["hr", "senior_leader"].includes(user.role);
   const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
+
+  useEscapeKey(() => {
+    if (filtersOpen) setFiltersOpen(false);
+    else setMenuId(null);
+  }, filtersOpen || menuId !== null);
+
+  useLayoutEffect(() => {
+    if (menuId === null || viewMode !== "list") {
+      setMenuOpensUp(false);
+      return;
+    }
+
+    const menu = personMenuRef.current;
+    const trigger = menu?.previousElementSibling;
+    if (!menu || !trigger) return;
+
+    const menuHeight = menu.getBoundingClientRect().height;
+    const triggerRect = trigger.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - triggerRect.bottom;
+    setMenuOpensUp(menuHeight > spaceBelow);
+  }, [menuId, viewMode]);
+
+  useEffect(() => {
+    if (!filtersOpen) return undefined;
+    function handleClickOutside(event) {
+      if (peopleFilterRef.current && !peopleFilterRef.current.contains(event.target)) {
+        setFiltersOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filtersOpen]);
 
   async function updateEmployment() {
     if (!pendingAction) return;
@@ -59,7 +95,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
         <div className="directory-tools">
           <label className="section-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people by name, role, or team" /></label>
           <select value={department} onChange={(e) => setDepartment(e.target.value)}><option value="All">All departments</option>{departments.slice(1).map((item) => <option key={item}>{item}</option>)}</select>
-          <div className="people-filter">
+          <div className="people-filter" ref={peopleFilterRef}>
             <button className={`icon-button${employmentStatus !== "All" ? " active" : ""}`} onClick={() => setFiltersOpen((open) => !open)} aria-label="Filter people" aria-expanded={filtersOpen} aria-controls="people-filter-options" title="Filter people"><SlidersHorizontal size={19} /></button>
             {filtersOpen && <div className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
               <b>Employment status</b>
@@ -79,9 +115,9 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
           </div>
         </div>
         <div className={`people-grid${viewMode === "list" ? " people-list" : ""}`}>
-          {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}`} key={person.id}>
-            <button className="person-more" onClick={() => setMenuId(menuId === person.id ? null : person.id)} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
-            {menuId === person.id && <div className="person-menu">
+          {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}${menuId === person.id ? " menu-open" : ""}`} key={person.id}>
+            <button className="person-more" onClick={() => { setMenuOpensUp(false); setMenuId(menuId === person.id ? null : person.id); }} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
+            {menuId === person.id && <div className={`person-menu${viewMode === "list" && menuOpensUp ? " opens-up" : ""}`} ref={personMenuRef}>
               {(person.employment_status || "active") === "active" && person.id !== user.id && <button onClick={() => { onStartChat(person); setMenuId(null); }}><MessageSquareText size={15} /> Start conversation</button>}
               {person.email && <button onClick={() => copyEmail(person)}><Copy size={15} /> Copy email</button>}
               {canInvite && <button onClick={() => { onManage(person); setMenuId(null); }}><Pencil size={15} /> Edit employee details</button>}

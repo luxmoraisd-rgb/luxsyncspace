@@ -330,9 +330,14 @@ if (!process.env.VERCEL) {
 app.use((error, _req, res, _next) => {
   console.error(error);
   if (error?.name === "ZodError") return res.status(400).json({ error: error.issues[0]?.message || "Invalid request" });
-  res.status(error.status || 500).json({
-    error: error.status || process.env.NODE_ENV !== "production" ? error.message : "Something went wrong. Please try again."
-  });
+  const status = error.status || 500;
+  const networkFailure = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|getaddrinfo/i.test(`${error.code || ""} ${error.message || ""}`);
+  const message = networkFailure
+    ? "Unable to connect to the server. Please check your internet connection and try again."
+    : status < 500
+      ? error.message
+      : "Something went wrong. Please try again.";
+  res.status(status).json({ error: message });
 });
 
 if (!process.env.VERCEL) {

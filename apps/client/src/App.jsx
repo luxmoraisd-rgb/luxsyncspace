@@ -300,7 +300,7 @@ export default function App() {
       setData((current) => ({
         ...current,
         events: current.events.map((item) => item.id === event.id
-          ? { ...item, ...result.event }
+          ? { ...item, ...result.event, cancelled_at: result.event?.cancelled_at || optimisticCancelledAt }
           : item)
       }));
       setToast(result.message);
@@ -325,6 +325,10 @@ export default function App() {
     return result;
   }
 
+  const handleChatSelect = useCallback(({ channel = null, direct = null } = {}) => {
+    setChatParams({ channel, direct });
+  }, []);
+
   const refreshWorkspace = useCallback(async () => {
     const [me, workspace] = await Promise.all([api("/auth/me"), api("/bootstrap")]);
     if (me?.user) setUser(me.user);
@@ -346,12 +350,39 @@ export default function App() {
     );
   }, []);
 
+  const handleEventCancelled = useCallback((eventId) => {
+    setData((current) => ({
+      ...current,
+      events: current.events.map((e) => e.id === eventId ? { ...e, cancelled_at: new Date().toISOString() } : e)
+    }));
+  }, []);
+
   const updatePresence = useCallback((presence) => {
     setUser((current) => current?.id === presence.id ? { ...current, ...presence } : current);
     setData((current) => ({
       ...current,
       people: current.people.map((person) => person.id === presence.id ? { ...person, ...presence } : person)
     }));
+  }, []);
+
+  const updateEmployee = useCallback((employee) => {
+    if (!employee?.id) return;
+    setUser((current) => current?.id === employee.id ? { ...current, ...employee } : current);
+    setData((current) => {
+      const updatePerson = (person) => person.id === employee.id
+        ? {
+          ...person,
+          ...employee,
+          full_name: person.hide_full_name ? person.full_name : employee.full_name,
+          email: person.hide_email ? person.email : employee.email
+        }
+        : person;
+      return {
+        ...current,
+        people: current.people.map(updatePerson),
+        ...(current.workforce ? { workforce: current.workforce.map(updatePerson) } : {})
+      };
+    });
   }, []);
 
   async function changeAvailabilityStatus(status) {
@@ -456,6 +487,7 @@ export default function App() {
         onNotification={receiveNotification}
         onChatMessage={receiveChatMessage}
         onPresenceUpdate={updatePresence}
+        onEmployeeUpdate={updateEmployee}
         onMeetingEnded={(endedEvent) => {
           if (endedEvent?.event_id === meetingId) {
             const isCall = Boolean(endedEvent?.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
@@ -474,16 +506,16 @@ export default function App() {
     <>
       <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={markAllNotificationsRead} onNotificationRead={markNotificationRead} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
-        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} directConversationTimes={data.directConversationTimes || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
+        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} directConversationTimes={data.directConversationTimes || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onSelectConversation={handleChatSelect} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
         {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
-        {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
+        {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onEmployeeUpdate={updateEmployee} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
         {active === "change-password" && <ChangePassword user={user} onBack={() => navigate("settings")} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "change-password", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} onEmployeeUpdate={updateEmployee} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}
