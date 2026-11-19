@@ -35,6 +35,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const endRef = useRef();
   const textareaRef = useRef();
   const fileInputRef = useRef();
@@ -78,6 +80,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
   ), [people, query]);
+  const mentionSuggestions = useMemo(() => {
+    if (!selected || !mentionQuery) return [];
+    const term = mentionQuery.query.toLowerCase();
+    return channelMembers
+      .filter((person) => person.full_name.toLowerCase().includes(term))
+      .slice(0, 8);
+  }, [channelMembers, mentionQuery, selected]);
   const visibleMessages = useMemo(() => {
     const term = messageSearch.trim().toLowerCase();
     if (!term) return messages;
@@ -86,6 +95,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
+    setMentionQuery(null);
+    setMentionIndex(0);
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
@@ -253,6 +264,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     const selectedReply = replyingTo;
     const selectedEdit = editingMessage;
     setMessage("");
+    setMentionQuery(null);
     setAttachment(null);
     setReplyingTo(null);
     setEditingMessage(null);
@@ -395,6 +407,35 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     requestAnimationFrame(() => {
       element?.focus();
       element?.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  }
+
+  function updateMentionQuery(value, cursor) {
+    if (!selected || selectedPerson || editingMessage) {
+      setMentionQuery(null);
+      return;
+    }
+    const prefix = value.slice(0, cursor);
+    const match = /(?:^|\s)@([^\s@]*)$/u.exec(prefix);
+    if (!match) {
+      setMentionQuery(null);
+      setMentionIndex(0);
+      return;
+    }
+    setMentionQuery({ start: prefix.lastIndexOf("@"), end: cursor, query: match[1] });
+    setMentionIndex(0);
+  }
+
+  function insertMention(person) {
+    if (!mentionQuery) return;
+    const mention = `@${person.full_name} `;
+    const nextMessage = `${message.slice(0, mentionQuery.start)}${mention}${message.slice(mentionQuery.end)}`;
+    const cursor = mentionQuery.start + mention.length;
+    setMessage(nextMessage);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(cursor, cursor);
     });
   }
 
@@ -602,7 +643,17 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
-            <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => {
+            {mentionQuery && !!mentionSuggestions.length && <div className="mention-picker" role="listbox" aria-label="Group members to mention">
+              <small>MEMBERS IN #{activeChannel?.name}</small>
+              {mentionSuggestions.map((person, index) => <button type="button" role="option" aria-selected={index === mentionIndex} className={index === mentionIndex ? "active" : ""} key={person.id} onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(person)}>
+                <Avatar person={person} size="xs" /><span><b>{person.full_name}</b><small>{person.title || person.department || "Group member"}</small></span>
+              </button>)}
+            </div>}
+            <textarea ref={textareaRef} value={message} onChange={(event) => { setMessage(event.target.value); updateMentionQuery(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyUp={(event) => { if (!["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) updateMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart); }} onPaste={pasteImage} onKeyDown={(event) => {
+              if (mentionQuery && mentionSuggestions.length && event.key === "ArrowDown") { event.preventDefault(); setMentionIndex((index) => (index + 1) % mentionSuggestions.length); return; }
+              if (mentionQuery && mentionSuggestions.length && event.key === "ArrowUp") { event.preventDefault(); setMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length); return; }
+              if (mentionQuery && mentionSuggestions.length && event.key === "Enter" && !event.shiftKey) { event.preventDefault(); insertMention(mentionSuggestions[mentionIndex]); return; }
+              if (mentionQuery && event.key === "Escape") { setMentionQuery(null); return; }
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
             }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
