@@ -16,7 +16,7 @@ const emptyInvite = () => ({
   employeeId: "",
   email: "",
   title: "",
-  department: "Engineering",
+  department: "",
   role: "employee",
   phone: "",
   location: "",
@@ -155,7 +155,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
       await enableNotifications();
       onToast("Notifications and the LuxSyncspace sound are enabled");
     } catch (error) {
-      setNotificationsOn(false);
+      setNotificationsOn(notificationsEnabled());
       onToast(error.message);
     }
   }
@@ -231,18 +231,34 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
 
   async function deleteEmployee() {
     if (!pendingDelete) return;
+    const employeeToDelete = pendingDelete;
     setBusy(true);
+    setPendingDelete(null);
+    setSelected(null);
+    setEditing(null);
+    if (onEmployeeUpdate) {
+      onEmployeeUpdate({
+        ...employeeToDelete,
+        employment_status: "deleted",
+        deleted_at: new Date().toISOString(),
+        offboarded_at: null,
+        presence: "offline",
+        availability_status: "offline"
+      });
+    }
+    onToast("Deleting employee...");
     try {
-      const result = await api(`/employees/${pendingDelete.id}/employment`, {
+      const result = await api(`/employees/${employeeToDelete.id}/employment`, {
         method: "PATCH",
         body: JSON.stringify({ status: "deleted" })
       });
-      setPendingDelete(null);
-      setSelected(null);
-      setEditing(null);
-      await onRefresh();
+      if (onEmployeeUpdate) onEmployeeUpdate(result.employee);
+      if (!onEmployeeUpdate) await onRefresh();
       onToast(result.message || "Employee deleted");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      if (onEmployeeUpdate) onEmployeeUpdate(employeeToDelete);
+      onToast(error.message);
+    }
     finally { setBusy(false); }
   }
 
@@ -299,7 +315,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
               <div className="form-grid"><label><span>Employee name</span><input value={invite.fullName} onChange={(e) => setInvite({ ...invite, fullName: capitalizeName(e.target.value) })} placeholder="Full legal name" required /></label><label><span>Work email</span><input type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} placeholder="employee@company.com" required /></label></div>
               <label><span>Employee ID</span><input value={invite.employeeId} onChange={(e) => setInvite({ ...invite, employeeId: e.target.value.toUpperCase() })} placeholder="e.g. LUX-1002 (leave blank to generate automatically)" pattern="[A-Za-z0-9-]{3,30}" /></label>
               <label><span>Designation</span><input value={invite.title} onChange={(e) => setInvite({ ...invite, title: e.target.value })} placeholder="e.g. Software Engineer" required /></label>
-              <div className="form-grid"><label><span>Department</span><input value={invite.department} onChange={(e) => setInvite({ ...invite, department: e.target.value })} required /></label><label><span>Access role</span><select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr">HR</option></select></label></div>
+              <div className="form-grid"><label><span>Department</span><input value={invite.department} onChange={(e) => setInvite({ ...invite, department: e.target.value })} placeholder="e.g. Engineering, QA, HR, Finance, Marketing" required /></label><label><span>Access role</span><select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr">HR</option></select></label></div>
               <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={invite.location} onChange={(e) => setInvite({ ...invite, location: e.target.value })} placeholder="e.g. Hyderabad, India" /></label></div>
               <div className="form-grid"><label><span>Reporting manager</span><select value={invite.managerId} onChange={(e) => setInvite({ ...invite, managerId: e.target.value })}><option value="">Not assigned</option>{activePeople.map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={invite.joinedAt} onChange={(e) => setInvite({ ...invite, joinedAt: e.target.value })} required /></label></div>
               <label><span>Employee profile summary</span><textarea value={invite.bio} onChange={(e) => setInvite({ ...invite, bio: e.target.value })} placeholder="Add responsibilities, expertise, or a short professional introduction…" maxLength={1000} /></label>
@@ -308,7 +324,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
             </form>
           </>}
           {tab === "password-resets" && isAdministrator && <>
-            <header className="settings-section-head reset-section-head"><div><h2>Password reset requests</h2><p>Administrator-only requests submitted from the sign-in page.</p></div><button className="button button-secondary" onClick={loadResetRequests} disabled={requestsLoading}><RefreshCw size={15} /> Refresh</button></header>
+            <header className="settings-section-head reset-section-head"><div><h2>Password reset requests</h2><p>Administrator-only requests submitted from the sign-in page.</p></div><button className="button button-secondary" onClick={loadResetRequests} disabled={requestsLoading}><RefreshCw className={requestsLoading ? "refresh-icon is-spinning" : "refresh-icon"} size={15} /> Refresh</button></header>
             <div className="reset-request-list">
               {requestsLoading && !resetRequests.length && <div className="reset-list-empty">Loading password reset requests…</div>}
               {!requestsLoading && !resetRequests.length && <div className="reset-list-empty"><KeyRound size={25} /><b>No password reset requests</b><p>New employee requests will appear here.</p></div>}
@@ -321,7 +337,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
             </div>
           </>}
           {tab === "support" && isAdministrator && <>
-            <header className="settings-section-head reset-section-head"><div><h2>Support requests</h2><p>Employee requests submitted through the Help Center.</p></div><button className="button button-secondary" onClick={loadSupportRequests} disabled={supportLoading}><RefreshCw size={15} /> Refresh</button></header>
+            <header className="settings-section-head reset-section-head"><div><h2>Support requests</h2><p>Employee requests submitted through the Help Center.</p></div><button className="button button-secondary" onClick={loadSupportRequests} disabled={supportLoading}><RefreshCw className={supportLoading ? "refresh-icon is-spinning" : "refresh-icon"} size={15} /> Refresh</button></header>
             <div className="support-request-list">
               {supportLoading && !supportRequests.length && <div className="reset-list-empty">Loading support requests…</div>}
               {!supportLoading && !supportRequests.length && <div className="reset-list-empty"><LifeBuoy size={25} /><b>No support requests</b><p>New employee requests will appear here.</p></div>}

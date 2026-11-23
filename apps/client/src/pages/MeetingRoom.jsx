@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, PhoneOff,
+  Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, Minimize, MonitorUp, PhoneOff,
   Send, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
@@ -28,7 +28,10 @@ const VIDEO_CONSTRAINTS = {
 export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast, skipLobby = false }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
-  const isDirectCall = Boolean(meeting.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
+  const isDirectCall = Boolean(
+    (meeting.isCall || meeting.title?.includes(" and "))
+    && (!Array.isArray(meeting.attendees) || meeting.attendees.length <= 2)
+  );
   const [inLobby, setInLobby] = useState(!skipLobby);
   const [cameraBlocked, setCameraBlocked] = useState(false);
   const [micDevice, setMicDevice] = useState("Microphone (Realtek(R) Audio)");
@@ -44,6 +47,8 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [raised, setRaised] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [panel, setPanel] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [chat, setChat] = useState([]);
   const [chatMessage, setChatMessage] = useState("");
   const [meetingChatPopup, setMeetingChatPopup] = useState(null);
@@ -66,6 +71,43 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const reconnectTimersRef = useRef(new Map());
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
   const chatBottomRef = useRef(null);
+  const controlsIdleTimerRef = useRef(null);
+
+  function showFullscreenControls() {
+    if (!document.fullscreenElement) return;
+    setControlsVisible(true);
+    window.clearTimeout(controlsIdleTimerRef.current);
+    controlsIdleTimerRef.current = window.setTimeout(() => setControlsVisible(false), 3000);
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (error) {
+      console.error("Fullscreen toggle failed", error);
+      onToast?.("Could not change full-screen mode.");
+    }
+  }
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const fullscreen = Boolean(document.fullscreenElement);
+      setIsFullscreen(fullscreen);
+      setControlsVisible(!fullscreen);
+      window.clearTimeout(controlsIdleTimerRef.current);
+      controlsIdleTimerRef.current = null;
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.clearTimeout(controlsIdleTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => () => {
     inviteResetTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -576,10 +618,11 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     if (isDirectCall) {
       try {
         await onEndMeeting(meeting);
-        return;
       } catch (err) {
         console.error("End call error", err);
+        onToast?.(err.message || "Could not end the call.");
       }
+      return;
     }
     onLeave();
   }
@@ -721,7 +764,11 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   }
 
   return (
-    <div className={`meeting-room ${isAudioOnly ? "audio-call" : "video-call"}`}>
+    <div
+      className={`meeting-room ${isAudioOnly ? "audio-call" : "video-call"}${isFullscreen ? " is-fullscreen" : ""}${isFullscreen && !controlsVisible ? " controls-hidden" : ""}`}
+      onPointerMove={showFullscreenControls}
+      onPointerDown={showFullscreenControls}
+    >
       <header className="meeting-topbar">
         <div><img src="/icons/luxsyncspace-192.png" alt="" /><span><b>{meeting.title || "LuxSyncspace meeting"}</b><small>{status} · Encrypted media connection</small></span></div>
         <div><time>{elapsed}</time><button onClick={copyLink} className={copiedLink ? "meeting-copied-btn" : ""} type="button" title="Copy meeting link">{copiedLink ? <Check size={17} /> : <Copy size={17} />} {copiedLink ? "Link copied!" : "Copy invite link"}</button></div>
@@ -771,7 +818,10 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           </div><form className="meeting-chat-composer" onSubmit={sendChat}><input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Message everyone" /><button><Send size={17} /></button></form></>}
         </aside>}
       </main>
-      <footer className={`meeting-controls ${isOrganizer ? "organizer-controls" : ""}`}>
+      <footer
+        className={`meeting-controls ${isOrganizer ? "organizer-controls" : ""}`}
+        aria-hidden={isFullscreen && !controlsVisible}
+      >
         <div className="meeting-info"><span>{allParticipants.length}</span><small>participants</small></div>
         <div className="meeting-main-controls">
           <MeetingControl active={!micOn} onClick={toggleMic} icon={micOn ? Mic : MicOff} label={micOn ? "Mute" : "Unmute"} />
@@ -781,9 +831,9 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
-          <MeetingControl onClick={() => document.documentElement.requestFullscreen?.()} icon={Expand} label="Full screen" />
+          <MeetingControl onClick={toggleFullscreen} icon={isFullscreen ? Minimize : Expand} label={isFullscreen ? "Exit full screen" : "Full screen"} />
         </div>
-        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={handleLeaveCall}><PhoneOff size={18} /><span>{isDirectCall ? "End call" : "Leave"}</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
+        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={handleLeaveCall}><PhoneOff size={18} /><span>{isDirectCall ? "End call" : "Leave"}</span></button>{isOrganizer && !isDirectCall && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
       </footer>
       {meetingChatPopup && <button className="meeting-chat-popup" onClick={() => { setPanel("chat"); setMeetingChatPopup(null); }}>
         <span><MessageSquareText size={18} /></span><div><b>{meetingChatPopup.sender_name}</b><p>{meetingChatPopup.body}</p></div><small>Open chat</small>

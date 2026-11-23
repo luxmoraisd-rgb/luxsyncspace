@@ -27,7 +27,11 @@ export function CreateGroup({ people, onCreate, onClose }) {
     <Modal title="Create a group" subtitle="Bring a project, department, or working team together" onClose={onClose}>
       <form className="event-form" onSubmit={submit}>
         <label><span>Group name</span><input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Mobile engineering" maxLength={60} required /></label>
-        <label><span>Description</span><textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What will this group work on?" /></label>
+        <label className="group-description-field">
+          <span>Description</span>
+          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What will this group work on?" maxLength={500} />
+          <small className="group-description-counter" aria-live="polite">{form.description.length}/500</small>
+        </label>
         <div className="group-members-field">
           <div className="group-members-label"><span>Add employees</span><small>{form.memberIds.length} selected</small></div>
           <label className="group-member-search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employees by name, role, or department" /></label>

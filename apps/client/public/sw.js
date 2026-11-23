@@ -92,28 +92,29 @@ self.addEventListener("push", (event) => {
     data = { body: event.data?.text() || "You have a new workspace update." };
   }
   const isCall = data.type === "call";
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      if (!isCall && clients.some((client) => client.visibilityState === "visible")) return;
-      return self.registration.showNotification(data.title || "LuxSyncspace", {
-        body: data.body || "You have a new workspace update.",
-        tag: data.tag || "luxsyncspace",
-        icon: "/icons/luxsyncspace-192.png",
-        badge: "/icons/luxsyncspace-192.png",
-        vibrate: isCall ? [500, 220, 500, 900, 500, 220, 500] : [180, 80, 180],
-        renotify: true,
-        requireInteraction: isCall,
-        silent: false,
-        actions: isCall ? [
-          { action: "accept", title: "Accept" },
-          { action: "reject", title: "Reject" }
-        ] : [],
-        data: {
-          type: data.type || "message",
-          meetingId: data.meetingId,
-          url: data.url || "/"
-        }
-      });
-    })
-  );
+  event.waitUntil((async () => {
+    const subscription = await self.registration.pushManager.getSubscription();
+    if (!subscription) return;
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    if (!isCall && clients.some((client) => client.visibilityState === "visible")) return;
+    await self.registration.showNotification(data.title || "LuxSyncspace", {
+      body: data.body || "You have a new workspace update.",
+      tag: data.tag || "luxsyncspace",
+      icon: "/icons/luxsyncspace-192.png",
+      badge: "/icons/luxsyncspace-192.png",
+      vibrate: isCall ? [500, 220, 500, 900, 500, 220, 500] : [180, 80, 180],
+      renotify: true,
+      requireInteraction: isCall,
+      silent: false,
+      actions: isCall ? [
+        { action: "accept", title: "Accept" },
+        { action: "reject", title: "Reject" }
+      ] : [],
+      data: {
+        type: data.type || "message",
+        meetingId: data.meetingId,
+        url: data.url || "/"
+      }
+    });
+  })());
 });

@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BellOff, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Bell, BellOff, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, SmilePlus, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -10,9 +10,11 @@ import { eventTime } from "../lib/format";
 import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
+import { createPortal } from "react-dom";
 
 const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", "👍", "👏", "🙌", "🙏", "💪", "✅", "🎉", "🔥", "⭐", "💡", "❤️", "🚀", "📌", "📅", "💼", "👋"];
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const HOVER_REACTIONS = ["👍", "❤️", "😆", "😮"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
 function computeOptimisticReactions(currentReactions = [], emoji) {
@@ -73,6 +75,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [attachment, setAttachment] = useState(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [emojiPickerPosition, setEmojiPickerPosition] = useState(null);
+  const [messagesConversationKey, setMessagesConversationKey] = useState(null);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
@@ -84,18 +88,25 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [moreOpen, setMoreOpen] = useState(false);
   const [deleteGroupOpen, setDeleteGroupOpen] = useState(false);
   const [messageMenuId, setMessageMenuId] = useState(null);
+  const [messageMenuPosition, setMessageMenuPosition] = useState(null);
   const [reactionMessageId, setReactionMessageId] = useState(null);
   const [fullPickerMessageId, setFullPickerMessageId] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
-  const endRef = useRef();
+  const messagesContainerRef = useRef(null);
+  const messageCacheRef = useRef(new Map());
   const textareaRef = useRef();
   const fileInputRef = useRef();
   const photoInputRef = useRef();
   const attachmentButtonRef = useRef(null);
   const attachmentMenuRef = useRef(null);
+  const channelMoreRef = useRef(null);
   const emojiPickerRef = useRef(null);
+  const emojiButtonRef = useRef(null);
+  const conversationRef = useRef(null);
+  const conversationHeaderRef = useRef(null);
+  const composerRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
   const socketRef = useRef();
@@ -113,7 +124,95 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return mentionPeople.filter((person) => `${person.full_name} ${person.employee_id || ""}`.toLowerCase().includes(term)).slice(0, 8);
   }, [mentionPeople, mentionQuery]);
   const activeChannel = channels.find((channel) => channel.id === selected);
+  const currentConversationKey = selected ? `channel:${selected}` : selectedPerson ? `direct:${selectedPerson.id}` : null;
+  const messagesReady = currentConversationKey !== null && messagesConversationKey === currentConversationKey;
+  const isLoadingMessages = currentConversationKey !== null && messagesConversationKey !== currentConversationKey;
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
+
+  useLayoutEffect(() => {
+    if (!emojiOpen) return;
+
+    function positionEmojiPicker() {
+      const anchor = emojiButtonRef.current;
+      const picker = emojiPickerRef.current;
+      const conversation = conversationRef.current;
+      const header = conversationHeaderRef.current;
+      const composer = composerRef.current;
+      if (!anchor || !picker || !conversation || !header || !composer) return;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const pickerRect = picker.getBoundingClientRect();
+      const conversationRect = conversation.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      const width = Math.max(0, Math.min(286, conversationRect.width - 16, window.innerWidth - 16));
+      const availableHeight = Math.max(0, Math.min(composerRect.top, window.innerHeight) - headerRect.bottom - 16);
+      const left = Math.max(
+        conversationRect.left + 8,
+        Math.min(anchorRect.left, conversationRect.right - width - 8)
+      );
+
+      setEmojiPickerPosition({
+        top: headerRect.bottom + 8,
+        left,
+        width,
+        maxHeight: availableHeight
+      });
+    }
+
+    positionEmojiPicker();
+    window.addEventListener("resize", positionEmojiPicker);
+    window.visualViewport?.addEventListener("resize", positionEmojiPicker);
+    return () => {
+      window.removeEventListener("resize", positionEmojiPicker);
+      window.visualViewport?.removeEventListener("resize", positionEmojiPicker);
+    };
+  }, [emojiOpen]);
+
+  useLayoutEffect(() => {
+    if (messageMenuId === null) return;
+
+    const panel = messageMenuRef.current;
+    const messages = panel?.closest(".messages");
+    const header = conversationHeaderRef.current;
+    const composer = composerRef.current;
+    if (!panel || !messages || !header || !composer) return;
+
+    function positionMenu() {
+      const panelRect = panel.getBoundingClientRect();
+      const messagesRect = messages.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      const viewportTop = window.visualViewport?.offsetTop || 0;
+      const viewportBottom = viewportTop + (window.visualViewport?.height || window.innerHeight);
+      const topLimit = Math.max(messagesRect.top, headerRect.bottom, viewportTop) + 8;
+      const bottomLimit = Math.min(messagesRect.bottom, composerRect.top, viewportBottom) - 8;
+      if (bottomLimit <= topLimit) return;
+
+      const width = Math.min(panelRect.width, messagesRect.width - 16, window.innerWidth - 16);
+      const top = Math.max(topLimit, Math.min(panelRect.top, bottomLimit - panelRect.height));
+      const left = Math.max(
+        messagesRect.left + 8,
+        Math.min(panelRect.left, messagesRect.right - width - 8)
+      );
+      setMessageMenuPosition({ id: messageMenuId, top, left, width });
+    }
+
+    function closeMenuOnScroll() {
+      setMessageMenuPosition(null);
+      setMessageMenuId(null);
+    }
+
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.visualViewport?.addEventListener("resize", positionMenu);
+    messages.addEventListener("scroll", closeMenuOnScroll);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      window.visualViewport?.removeEventListener("resize", positionMenu);
+      messages.removeEventListener("scroll", closeMenuOnScroll);
+    };
+  }, [messageMenuId]);
 
   useEscapeKey(() => {
     if (fullPickerMessageId !== null) setFullPickerMessageId(null);
@@ -130,6 +229,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || attachmentMenuOpen || emojiOpen || mentionQuery || messageSearchOpen));
 
   function openChannel(channelId) {
+    restoreCachedMessages(`channel:${channelId}`);
     setSelected(channelId);
     setSelectedPerson(null);
     appliedInitialChannelRef.current = channelId;
@@ -143,6 +243,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }
 
   function openPerson(person) {
+    restoreCachedMessages(`direct:${person.id}`);
     setSelected(null);
     setSelectedPerson(person);
     appliedInitialChannelRef.current = null;
@@ -175,10 +276,23 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return secondTime - firstTime;
   }), [filteredPeople, latestDirectMessages]);
   const visibleMessages = useMemo(() => {
+    const conversationMessages = messagesConversationKey === currentConversationKey ? messages : [];
     const term = messageSearch.trim().toLowerCase();
-    if (!term) return messages;
-    return messages.filter((item) => `${item.sender_name} ${item.body} ${item.file_name || ""}`.toLowerCase().includes(term));
-  }, [messages, messageSearch]);
+    if (!term) return conversationMessages;
+    return conversationMessages.filter((item) => `${item.sender_name} ${item.body} ${item.file_name || ""}`.toLowerCase().includes(term));
+  }, [messages, messagesConversationKey, currentConversationKey, messageSearch]);
+
+  useEffect(() => {
+    if (messagesConversationKey !== null) {
+      messageCacheRef.current.set(messagesConversationKey, messages);
+    }
+  }, [messages, messagesConversationKey]);
+
+  function restoreCachedMessages(conversationKey) {
+    if (!messageCacheRef.current.has(conversationKey)) return;
+    setMessages(messageCacheRef.current.get(conversationKey));
+    setMessagesConversationKey(conversationKey);
+  }
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
@@ -189,6 +303,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setMembersExpanded(false);
     setMessageSearch("");
     setMessageSearchOpen(false);
+    setEmojiOpen(false);
+    setEmojiPickerPosition(null);
     setMoreOpen(false);
     setGroupDetailsOpen(false);
     setMessageMenuId(null);
@@ -224,7 +340,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     function handleClickOutside(event) {
       if (
         emojiPickerRef.current &&
-        !emojiPickerRef.current.contains(event.target)
+        !emojiPickerRef.current.contains(event.target) &&
+        !emojiButtonRef.current?.contains(event.target)
       ) {
         setEmojiOpen(false);
       }
@@ -235,6 +352,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         !attachmentMenuRef.current?.contains(event.target)
       ) {
         setAttachmentMenuOpen(false);
+      }
+
+      if (moreOpen && channelMoreRef.current && !channelMoreRef.current.contains(event.target)) {
+        setMoreOpen(false);
       }
 
       if (
@@ -258,7 +379,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [attachmentMenuOpen]);
+  }, [attachmentMenuOpen, moreOpen]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -386,6 +507,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       const personId = params.get("direct");
       const matchedChannel = channels.some((channel) => channel.id === channelId) ? channelId : null;
       const matchedPerson = people.find((person) => person.id === personId) || null;
+      if (matchedChannel) restoreCachedMessages(`channel:${matchedChannel}`);
+      else if (matchedPerson) restoreCachedMessages(`direct:${matchedPerson.id}`);
       setSelected(matchedChannel);
       setSelectedPerson(matchedPerson);
       appliedInitialChannelRef.current = matchedChannel;
@@ -401,6 +524,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       if (channels.some((channel) => channel.id === initialChannelId)) {
         appliedInitialChannelRef.current = initialChannelId;
         appliedInitialPersonRef.current = null;
+        restoreCachedMessages(`channel:${initialChannelId}`);
         setSelected(initialChannelId);
         setSelectedPerson(null);
       }
@@ -409,6 +533,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       if (targetPerson) {
         appliedInitialPersonRef.current = initialPersonId;
         appliedInitialChannelRef.current = null;
+        restoreCachedMessages(`direct:${targetPerson.id}`);
         setSelected(null);
         setSelectedPerson(targetPerson);
       }
@@ -446,30 +571,71 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
 
   useEffect(() => {
     if (!selected) return;
-    setMessages([]);
+    const conversationKey = `channel:${selected}`;
+    let active = true;
     setChannelMembers([]);
-    Promise.all([api(`/channels/${selected}/messages`), api(`/channels/${selected}/members`)])
-      .then(([conversation, membership]) => { setMessages(conversation.messages); setChannelMembers(membership.members); onConversationRead?.("channel", selected); })
-      .catch((error) => onToast(error.message));
+    api(`/channels/${selected}/messages`)
+      .then(({ messages }) => {
+        if (!active) return;
+        messageCacheRef.current.set(conversationKey, messages);
+        setMessages(messages);
+        setMessagesConversationKey(conversationKey);
+        onConversationRead?.("channel", selected);
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (!messageCacheRef.current.has(conversationKey)) {
+          setMessages([]);
+          setMessagesConversationKey(conversationKey);
+        }
+        onToast(error.message);
+      });
+    api(`/channels/${selected}/members`)
+      .then(({ members }) => {
+        if (active) setChannelMembers(members);
+      })
+      .catch((error) => {
+        if (active) onToast(error.message);
+      });
     socketRef.current?.emit("channel:join", selected);
     return () => {
+      active = false;
       socketRef.current?.emit("channel:leave", selected);
     };
   }, [selected]);
 
   useEffect(() => {
     if (!selectedPerson) return;
-    setMessages([]);
-    api(`/direct/${selectedPerson.id}`).then(({ messages }) => { setMessages(messages); onConversationRead?.("direct", selectedPerson.id); }).catch((error) => onToast(error.message));
-  }, [selectedPerson]);
+    const personId = selectedPerson.id;
+    const conversationKey = `direct:${personId}`;
+    let active = true;
+    api(`/direct/${personId}`)
+      .then(({ messages }) => {
+        if (!active) return;
+        messageCacheRef.current.set(conversationKey, messages);
+        setMessages(messages);
+        setMessagesConversationKey(conversationKey);
+        onConversationRead?.("direct", personId);
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (!messageCacheRef.current.has(conversationKey)) {
+          setMessages([]);
+          setMessagesConversationKey(conversationKey);
+        }
+        onToast(error.message);
+      });
+    return () => { active = false; };
+  }, [selectedPerson?.id]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages]);
+  useLayoutEffect(() => {
+    if (!messagesReady || !messagesContainerRef.current) return;
+    messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+  }, [messages.length, messagesConversationKey, currentConversationKey, messagesReady]);
 
   async function send(event) {
     event.preventDefault();
-    if ((!message.trim() && !attachment) || (!selected && !selectedPerson)) return;
+    if ((!message.trim() && !attachment) || (!selected && !selectedPerson) || !messagesReady) return;
     const body = message;
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
@@ -879,8 +1045,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
           </div>
         </section>
       ) : (
-        <section className={`conversation ${selectedPerson ? "direct-conversation" : ""}`}>
-          <header className="conversation-header">
+        <section className={`conversation ${selectedPerson ? "direct-conversation" : ""}`} ref={conversationRef}>
+          <header className="conversation-header" ref={conversationHeaderRef}>
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p>{selectedPerson && <small className="conversation-employee-id">Employee ID: {employeeIdLabel(selectedPerson)}</small>}</span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
@@ -895,8 +1061,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <small>{visibleMessages.length} result{visibleMessages.length === 1 ? "" : "s"}</small>
             <button onClick={() => { setMessageSearchOpen(false); setMessageSearch(""); }}><X size={16} /></button>
           </div>}
-          <div className="messages">
+          <div className="messages" ref={messagesContainerRef}>
             <div className="channel-intro">{selectedPerson ? <Avatar person={selectedPerson} size="lg" showPresence /> : <span><Hash size={26} /></span>}<h2>{selectedPerson ? `Conversation with ${selectedPerson.full_name}` : `Welcome to #${activeChannel?.name}`}</h2><p>{selectedPerson ? "This is a private conversation between the two of you." : activeChannel?.description}</p></div>
+            {isLoadingMessages && <div className="conversation-loading" role="status">Loading messages…</div>}
             {visibleMessages.map((item, index) => {
               const previous = visibleMessages[index - 1];
               const startsNewDay = !previous || !isSameMessageDay(previous.sent_at, item.sent_at);
@@ -906,7 +1073,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                 {startsNewDay && <div className="date-divider"><span>{messageDateLabel(item.sent_at)}</span></div>}
                 <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`}>
                   {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                  <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && (selected || selectedPerson) && ((item.seen_by_all || item.read_at)
+                  <div className="message-content"><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && (selected || selectedPerson) && ((item.seen_by_all || item.read_at)
                     ? <span className="message-sent-status seen" title="Seen" aria-label="Seen"><CheckCheck size={14} strokeWidth={2.5} /></span>
                     : <span className="message-sent-status" title={item.pending ? "Sending..." : "Sent"} aria-label={item.pending ? "Sending..." : "Sent"}><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                     {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
@@ -918,73 +1085,96 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                     {!!item.reactions?.length && !item.deleted_at && <div className="message-reactions">
                       {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
                     </div>}
-                  </div>
-                  {!item.pending && <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); setFullPickerMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>}
-                  {messageMenuId === item.id && <div
-                    ref={messageMenuRef}
-                    className={`message-actions-menu ${mine ? "align-mine" : ""}`}
-                  >
-                    {!item.deleted_at && <>
-                      <div className="message-menu-quick-reactions">
+                    {!item.pending && <div
+                      ref={messageMenuId === item.id ? messageMenuRef : null}
+                      className={`message-hover-actions ${messageMenuId === item.id ? "is-expanded" : ""}`}
+                      role="group"
+                      aria-label="Message actions"
+                      style={messageMenuId === item.id && messageMenuPosition?.id === item.id ? {
+                        position: "fixed",
+                        top: messageMenuPosition.top,
+                        left: messageMenuPosition.left,
+                        right: "auto",
+                        width: messageMenuPosition.width
+                      } : undefined}
+                    >
+                      <div className="message-hover-controls">
+                        {!item.deleted_at && HOVER_REACTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className="message-quick-reaction"
+                            onClick={() => reactToMessage(item, emoji)}
+                            aria-label={`React with ${emoji}`}
+                            title={`React with ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                        {!item.deleted_at && <button className="message-react" type="button" onClick={() => {
+                          setReactionMessageId(reactionMessageId === item.id ? null : item.id);
+                          setFullPickerMessageId(null);
+                          setMessageMenuId(null);
+                        }} aria-label="Add reaction" title="Add reaction"><SmilePlus size={16} /></button>}
+                        {!item.deleted_at && <span className="message-actions-divider" aria-hidden="true" />}
+                        {!item.deleted_at && mine && item.body && <button type="button" onClick={() => editMessage(item)} aria-label="Edit message" title="Edit message"><Pencil size={16} /></button>}
+                        <button className="message-more" type="button" aria-expanded={messageMenuId === item.id} aria-haspopup="menu" onClick={() => {
+                          setMessageMenuPosition(null);
+                          setMessageMenuId(messageMenuId === item.id ? null : item.id);
+                          setReactionMessageId(null);
+                          setFullPickerMessageId(null);
+                        }} aria-label="More options" title="More options"><MoreHorizontal size={16} /></button>
+                      </div>
+                      {messageMenuId === item.id && <div className="message-actions-menu" role="menu">
+                        {!item.deleted_at && <>
+                          <button type="button" role="menuitem" onClick={() => { setReactionMessageId(item.id); setFullPickerMessageId(item.id); setMessageMenuId(null); }}>
+                            <Smile size={16} /> React with emoji...
+                          </button>
+                          <button type="button" role="menuitem" onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
+                          <button type="button" role="menuitem" onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
+                          {mine && item.body && <button type="button" role="menuitem" onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
+                        <button type="button" role="menuitem" onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
+                        {mine && !item.deleted_at && <button type="button" role="menuitem" className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
+                      </div>}
+                    </div>}
+                    {reactionMessageId === item.id && <div
+                      ref={reactionPickerRef}
+                      className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
+                    >
+                      <div className="reaction-picker-quick-bar">
                         {QUICK_REACTIONS.map((emoji) => (
                           <button
                             key={emoji}
                             type="button"
-                            className="menu-reaction-btn"
+                            className="reaction-quick-btn"
                             onClick={() => reactToMessage(item, emoji)}
                             title={`React ${emoji}`}
                           >
                             {emoji}
                           </button>
                         ))}
-                      </div>
-                      <button onClick={() => { setReactionMessageId(item.id); setFullPickerMessageId(item.id); setMessageMenuId(null); }}>
-                        <Smile size={16} /> React with emoji...
-                      </button>
-                      <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
-                      <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
-                      {mine && item.body && <button onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
-                    <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
-                    {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
-                  </div>}
-                  {reactionMessageId === item.id && <div
-                    ref={reactionPickerRef}
-                    className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
-                  >
-                    <div className="reaction-picker-quick-bar">
-                      {QUICK_REACTIONS.map((emoji) => (
                         <button
-                          key={emoji}
                           type="button"
-                          className="reaction-quick-btn"
-                          onClick={() => reactToMessage(item, emoji)}
-                          title={`React ${emoji}`}
+                          className="reaction-quick-btn reaction-more-toggle"
+                          onClick={() => setFullPickerMessageId((curr) => curr === item.id ? null : item.id)}
+                          title="More emojis"
                         >
-                          {emoji}
+                          <Plus size={16} />
                         </button>
-                      ))}
-                      <button
-                        type="button"
-                        className="reaction-quick-btn reaction-more-toggle"
-                        onClick={() => setFullPickerMessageId((curr) => curr === item.id ? null : item.id)}
-                        title="More emojis"
-                      >
-                        <Plus size={16} />
-                      </button>
-                    </div>
-                    {fullPickerMessageId === item.id && (
-                      <div className="reaction-full-picker-wrap">
-                        <Picker data={data} onEmojiSelect={(emoji) => reactToMessage(item, emoji.native)} theme="light" />
                       </div>
-                    )}
-                  </div>}
+                      {fullPickerMessageId === item.id && (
+                        <div className="reaction-full-picker-wrap">
+                          <Picker data={data} onEmojiSelect={(emoji) => reactToMessage(item, emoji.native)} theme="light" />
+                        </div>
+                      )}
+                    </div>}
+                  </div>
                 </div>
               </Fragment>;
             })}
-            {messageSearch && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
-            <div ref={endRef} />
+            {messageSearch && !isLoadingMessages && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
           </div>
-          <form className="message-composer" onSubmit={send}>
+          <form className="message-composer" ref={composerRef} onSubmit={send}>
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
@@ -1013,23 +1203,31 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <input ref={photoInputRef} className="composer-file-input" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp" onChange={chooseFile} />
             <div className="composer-toolbar"><span>
               <button ref={attachmentButtonRef} type="button" className={uploading ? "tool-busy" : attachmentMenuOpen ? "active" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
-              <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
-            </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
+              <button ref={emojiButtonRef} type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji" aria-haspopup="dialog" aria-expanded={emojiOpen}><Smile size={18} /></button>
+            </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading || !messagesReady}><Send size={17} /></button></div>
             {attachmentMenuOpen && <div ref={attachmentMenuRef} role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Upload from This Device</button>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Photos</button>
             </div>}
-            {emojiOpen &&
-              <div
-                ref={emojiPickerRef}
-                className="emoji-picker"
-                role="dialog"
-                aria-label="Choose an emoji"
-              >
-                <header><b>Choose an emoji</b><button type="button" onClick={() => setEmojiOpen(false)}><X size={15} /></button></header>
-                <Picker data={data} onEmojiSelect={(emoji) => insertEmoji(emoji.native)} theme="light" />
-              </div>}
           </form>
+          {emojiOpen && createPortal(
+            <div
+              ref={emojiPickerRef}
+              className="emoji-picker"
+              role="dialog"
+              aria-label="Choose an emoji"
+              style={emojiPickerPosition ? {
+                top: emojiPickerPosition.top,
+                left: emojiPickerPosition.left,
+                width: emojiPickerPosition.width,
+                maxHeight: emojiPickerPosition.maxHeight
+              } : { visibility: "hidden" }}
+            >
+              <header><b>Choose an emoji</b><button type="button" onClick={() => setEmojiOpen(false)} aria-label="Close emoji picker"><X size={15} /></button></header>
+              <Picker data={data} onEmojiSelect={(emoji) => insertEmoji(emoji.native)} theme="light" dynamicWidth />
+            </div>,
+            document.body
+          )}
         </section>
       )}
 
@@ -1039,7 +1237,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         <div className="detail-actions">
           <button className={channelMuted ? "active" : ""} onClick={toggleMute}>{channelMuted ? <BellOff size={18} /> : <Bell size={18} />}<span>{channelMuted ? "Unmute" : "Mute"}</span></button>
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
-          <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
+          <div className="channel-more-wrap" ref={channelMoreRef}><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
             {moreOpen && <div className="channel-more-menu">
               {canCreateGroup && <button onClick={() => { setManageMembers(true); setMoreOpen(false); }}><UserPlus size={16} /> Manage members</button>}
               <button onClick={copyChannelLink}><Hash size={16} /> Copy channel link</button>
@@ -1128,23 +1326,33 @@ function messageDateLabel(value) {
 }
 
 function MessageBody({ body, people }) {
-  const parts = body.split(/(https?:\/\/[^\s]+)/g);
-  return <p>{parts.map((part, index) => {
-    if (/^https?:\/\//.test(part)) {
-      return (
-        <a
-          className="message-link"
-          href={part}
-          target="_blank"
-          rel="noopener noreferrer"
-          key={`${part}-${index}`}
-        >
-          {part}
-        </a>
-      );
-    }
-    return renderMessageText(part, people, index);
-  })}</p>;
+  const [expanded, setExpanded] = useState(false);
+  const isLong = body.length > 200;
+  const visibleBody = isLong && !expanded ? body.slice(0, 200) : body;
+  const parts = visibleBody.split(/(https?:\/\/[^\s]+)/g);
+  useEffect(() => setExpanded(false), [body]);
+
+  return <>
+    <p>{parts.map((part, index) => {
+      if (/^https?:\/\//.test(part)) {
+        return (
+          <a
+            className="message-link"
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            key={`${part}-${index}`}
+          >
+            {part}
+          </a>
+        );
+      }
+      return renderMessageText(part, people, index);
+    })}{isLong && !expanded && "…"}</p>
+    {isLong && <button className="message-see-more" type="button" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
+      {expanded ? "See less" : "See more"}
+    </button>}
+  </>;
 }
 
 function renderMessageText(text, people, keyPrefix) {

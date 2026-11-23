@@ -361,7 +361,10 @@ export default function App() {
     setUser((current) => current?.id === presence.id ? { ...current, ...presence } : current);
     setData((current) => ({
       ...current,
-      people: current.people.map((person) => person.id === presence.id ? { ...person, ...presence } : person)
+      people: current.people.map((person) => person.id === presence.id ? { ...person, ...presence } : person),
+      ...(current.workforce ? {
+        workforce: current.workforce.map((person) => person.id === presence.id ? { ...person, ...presence } : person)
+      } : {})
     }));
   }, []);
 

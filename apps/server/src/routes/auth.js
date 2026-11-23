@@ -7,6 +7,7 @@ import { sql } from "../db/client.js";
 import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendPasswordResetCode } from "../services/email.js";
+import { invalidateCache } from "../services/cache.js";
 
 export const authRouter = Router();
 
@@ -65,9 +66,14 @@ authRouter.post("/login", async (req, res, next) => {
     if ((user.employment_status || "active") !== "active") {
       return res.status(403).json({ error: user.employment_status === "offboarded" ? "Your account has been offboarded. Contact your administrator." : "This employee account is no longer active." });
     }
-    await sql`UPDATE users SET presence = 'online', availability_status = 'online' WHERE id = ${user.id}`;
-    user.presence = "online";
-    user.availability_status = "online";
+    const [presence] = await sql`
+      UPDATE users SET presence = 'online', availability_status = 'online'
+      WHERE id = ${user.id}
+      RETURNING id, presence, availability_status
+    `;
+    invalidateCache(`people:${user.organization_id}`);
+    req.app.get("io")?.to(`org:${user.organization_id}`).emit("presence:updated", presence);
+    Object.assign(user, presence);
     const token = jwt.sign(
       { userId: user.id, organizationId: user.organization_id, email: user.email },
       config.jwtSecret,

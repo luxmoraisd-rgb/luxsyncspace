@@ -18,11 +18,12 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const peopleFilterRef = useRef(null);
   const personMenuRef = useRef(null);
   const departments = ["All", ...new Set(people.map((p) => p.department))];
-  const filtered = useMemo(() => people.filter((person) =>
-    (department === "All" || person.department === department) &&
-    (employmentStatus === "All" || (person.employment_status || "active") === employmentStatus) &&
-    `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase())
-  ), [people, query, department, employmentStatus]);
+  const filtered = useMemo(() => people.filter((person) => {
+    const status = person.employment_status || "active";
+    return (department === "All" || person.department === department) &&
+      (employmentStatus === "All" ? status !== "deleted" : status === employmentStatus) &&
+      `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase());
+  }), [people, query, department, employmentStatus]);
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canManageEmployment = ["hr", "senior_leader"].includes(user.role);
   const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
@@ -47,6 +48,19 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
     const spaceBelow = window.innerHeight - triggerRect.bottom;
     setMenuOpensUp(menuHeight > spaceBelow);
   }, [menuId, viewMode]);
+
+  useEffect(() => {
+    if (menuId === null) return undefined;
+
+    function handleClickOutside(event) {
+      if (personMenuRef.current && !personMenuRef.current.contains(event.target)) {
+        setMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuId]);
 
   useEffect(() => {
     if (!filtersOpen) return undefined;
@@ -100,7 +114,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
             {filtersOpen && <div className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
               <b>Employment status</b>
               {[
-                ["All", "All statuses"],
+                ["All", "Active and offboarded"],
                 ["active", "Active"],
                 ["offboarded", "Offboarded"],
                 ["deleted", "Deleted"]

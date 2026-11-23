@@ -3,6 +3,8 @@ import { api } from "./api";
 const ENABLED_KEY = "luxsyncspace_notifications_enabled";
 let sharedAudioContext = null;
 let subscriptionRefresh = null;
+let subscriptionRefreshGeneration = null;
+let notificationGeneration = 0;
 
 function getAudioContext() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -35,6 +37,7 @@ export function notificationsEnabled() {
 export async function enableNotifications() {
   if (!notificationsSupported()) throw new Error("Notifications are not supported in this browser");
   if (!("PushManager" in window)) throw new Error("Push notifications are not supported in this browser");
+  const generation = notificationGeneration;
   const permission = Notification.permission === "denied"
     ? "denied"
     : await Notification.requestPermission();
@@ -43,15 +46,23 @@ export async function enableNotifications() {
       ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
       : "Allow notifications in the browser prompt to enable alerts.");
   }
+  if (generation !== notificationGeneration) {
+    throw new Error("Notifications were turned off before setup completed.");
+  }
   localStorage.setItem(ENABLED_KEY, "true");
   window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   try {
     const { publicKey } = await api("/push/config");
     if (!publicKey) throw new Error("Push notifications are not configured on the server");
-    await refreshNotificationSubscription(publicKey);
+    const refreshed = await refreshNotificationSubscription(publicKey, generation);
+    if (!refreshed || generation !== notificationGeneration || !notificationsEnabled()) {
+      throw new Error("Notifications were turned off before setup completed.");
+    }
   } catch (error) {
-    localStorage.setItem(ENABLED_KEY, "false");
-    window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
+    if (generation === notificationGeneration) {
+      localStorage.setItem(ENABLED_KEY, "false");
+      window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
+    }
     throw error;
   }
   await playNotificationSound();
@@ -65,11 +76,20 @@ async function getNotificationRegistration() {
   return navigator.serviceWorker.ready;
 }
 
-export async function refreshNotificationSubscription(configuredPublicKey) {
-  if (!notificationsEnabled()) return false;
-  if (subscriptionRefresh) return subscriptionRefresh;
-  subscriptionRefresh = (async () => {
+export async function refreshNotificationSubscription(configuredPublicKey, generation = notificationGeneration) {
+  if (!notificationsEnabled() || generation !== notificationGeneration) return false;
+  if (subscriptionRefresh) {
+    if (subscriptionRefreshGeneration === generation) return subscriptionRefresh;
+    try {
+      await subscriptionRefresh;
+    } catch (error) {
+      console.warn("An outdated notification subscription setup failed", error);
+    }
+    return refreshNotificationSubscription(configuredPublicKey, generation);
+  }
+  const refresh = (async () => {
     const registration = await getNotificationRegistration();
+    if (!notificationsEnabled() || generation !== notificationGeneration) return false;
     await navigator.serviceWorker.ready;
     const { publicKey } = configuredPublicKey
       ? { publicKey: configuredPublicKey }
@@ -80,17 +100,34 @@ export async function refreshNotificationSubscription(configuredPublicKey) {
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey)
     });
+    if (!notificationsEnabled() || generation !== notificationGeneration) {
+      await subscription.unsubscribe();
+      return false;
+    }
     const json = subscription.toJSON();
     await api("/push/subscribe", {
       method: "POST",
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys })
     });
+    if (!notificationsEnabled() || generation !== notificationGeneration) {
+      await api("/push/subscribe", {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint: json.endpoint })
+      });
+      await subscription.unsubscribe();
+      return false;
+    }
     return true;
   })();
+  subscriptionRefresh = refresh;
+  subscriptionRefreshGeneration = generation;
   try {
-    return await subscriptionRefresh;
+    return await refresh;
   } finally {
-    subscriptionRefresh = null;
+    if (subscriptionRefresh === refresh) {
+      subscriptionRefresh = null;
+      subscriptionRefreshGeneration = null;
+    }
   }
 }
 
@@ -127,16 +164,18 @@ export async function dismissIncomingCallNotification(meetingId) {
 }
 
 export async function disableNotifications() {
+  notificationGeneration += 1;
   localStorage.setItem(ENABLED_KEY, "false");
   window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   const registration = await navigator.serviceWorker.getRegistration();
   const subscription = await registration?.pushManager.getSubscription();
   if (subscription) {
+    const endpoint = subscription.endpoint;
+    await subscription.unsubscribe();
     await api("/push/subscribe", {
       method: "DELETE",
-      body: JSON.stringify({ endpoint: subscription.endpoint })
+      body: JSON.stringify({ endpoint })
     });
-    await subscription.unsubscribe();
   }
 }
 
