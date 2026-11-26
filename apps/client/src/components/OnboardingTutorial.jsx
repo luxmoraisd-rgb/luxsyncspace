@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BellRing, CalendarPlus, Check, ChevronLeft, ChevronRight, MessageSquareText, Sparkles, Users, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useEscapeKey } from "../lib/useEscapeKey";
-import { enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notifications";
+import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported } from "../lib/notifications";
 
 const steps = [
   {
@@ -43,14 +43,33 @@ const steps = [
 export function OnboardingTutorial({ user, onComplete, onClose, onNavigate, onToast }) {
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled);
   const current = steps[step];
   const Icon = current.icon;
 
-  async function enableAlerts() {
+  useEffect(() => {
+    const syncNotifications = () => setNotificationsOn(notificationsEnabled());
+    window.addEventListener("luxsyncspace:notifications-changed", syncNotifications);
+    return () => window.removeEventListener("luxsyncspace:notifications-changed", syncNotifications);
+  }, []);
+
+  async function toggleAlerts() {
+    setNotificationBusy(true);
     try {
-      await enableNotifications();
-      onToast("Notifications enabled");
-    } catch (error) { onToast(error.message); }
+      if (notificationsOn) {
+        await disableNotifications();
+        onToast("Notifications disabled on this device");
+      } else {
+        await enableNotifications();
+        onToast("Notifications enabled");
+      }
+    } catch (error) {
+      setNotificationsOn(notificationsEnabled());
+      onToast(error.message);
+    } finally {
+      setNotificationBusy(false);
+    }
   }
 
   function handleExit() {
@@ -124,7 +143,7 @@ export function OnboardingTutorial({ user, onComplete, onClose, onNavigate, onTo
           <h1 id="onboarding-title">{current.title}</h1>
           <p>{current.description}</p>
           <div className="onboarding-points">{current.points.map((point) => <div key={point}><Check size={15} /><span>{point}</span></div>)}</div>
-          {current.notificationAction && <button className="button button-primary onboarding-action" onClick={enableAlerts} disabled={!notificationsSupported() || notificationsEnabled()}><BellRing size={16} /> {notificationsEnabled() ? "Notifications enabled" : "Enable notifications"}</button>}
+          {current.notificationAction && <button className={`button ${notificationsOn ? "button-secondary" : "button-primary"} onboarding-action`} onClick={toggleAlerts} disabled={!notificationsSupported() || notificationBusy}><BellRing size={16} /> {notificationBusy ? "Updating…" : notificationsOn ? "Disable notifications" : "Enable notifications"}</button>}
           {current.action && <button className="button button-secondary onboarding-action" onClick={useAction} disabled={busy}>{current.action}</button>}
           <footer>
             <button type="button" className="tutorial-skip" onClick={handleSkip} disabled={busy}>Skip tutorial</button>
