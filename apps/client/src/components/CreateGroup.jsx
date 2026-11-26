@@ -16,7 +16,20 @@ export function CreateGroup({ people, onCreate, onClose }) {
   const [search, setSearch] = useState("");
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const filteredPeople = people.filter((person) => `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(search.toLowerCase()));
+  const allFilteredSelected = filteredPeople.length > 0 && filteredPeople.every((person) => form.memberIds.includes(person.id));
   const toggleMember = (personId) => update("memberIds", form.memberIds.includes(personId) ? form.memberIds.filter((id) => id !== personId) : [...form.memberIds, personId]);
+  function toggleFilteredPeople() {
+    const filteredIds = new Set(filteredPeople.map((person) => person.id));
+    setForm((current) => {
+      const allSelected = filteredIds.size > 0 && [...filteredIds].every((id) => current.memberIds.includes(id));
+      return {
+        ...current,
+        memberIds: allSelected
+          ? current.memberIds.filter((id) => !filteredIds.has(id))
+          : [...new Set([...current.memberIds, ...filteredIds])]
+      };
+    });
+  }
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
@@ -24,7 +37,7 @@ export function CreateGroup({ people, onCreate, onClose }) {
     finally { setBusy(false); }
   }
   return (
-    <Modal title="Create a group" subtitle="Bring a project, department, or working team together" onClose={onClose}>
+    <Modal title="Create a group" subtitle="Bring a project, department, or working team together" onClose={onClose} closeOnBackdrop={false}>
       <form className="event-form" onSubmit={submit}>
         <label><span>Group name</span><input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Mobile engineering" maxLength={60} required /></label>
         <label className="group-description-field">
@@ -33,7 +46,15 @@ export function CreateGroup({ people, onCreate, onClose }) {
           <small className="group-description-counter" aria-live="polite">{form.description.length}/500</small>
         </label>
         <div className="group-members-field">
-          <div className="group-members-label"><span>Add employees</span><small>{form.memberIds.length} selected</small></div>
+          <div className="group-members-label">
+            <span>Add employees</span>
+            <div className="group-members-selection">
+              <button type="button" onClick={toggleFilteredPeople} disabled={!filteredPeople.length}>
+                {allFilteredSelected ? "Deselect all" : "Select all"}
+              </button>
+              <small>{form.memberIds.length} selected</small>
+            </div>
+          </div>
           <label className="group-member-search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employees by name, role, or department" /></label>
           <div className="group-member-list">
             {filteredPeople.map((person) => {

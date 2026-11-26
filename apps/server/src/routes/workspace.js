@@ -369,25 +369,36 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
 
 workspaceRouter.post("/channels", async (req, res, next) => {
   try {
-    const role = await currentRole(req.auth.userId);
-    if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role does not have permission to create groups" });
     const input = z.object({
       name: z.string().trim().min(2, "Group name must contain at least 2 letters or numbers").max(60, "Group name must be 60 characters or fewer").regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Group name can only contain letters, numbers, and single hyphens"),
       description: z.string().trim().max(500, "Group description must be 500 characters or fewer").default(""),
       memberIds: z.array(z.string().uuid()).default([]),
       isPrivate: z.boolean().default(false)
     }).parse(req.body);
-    const [channel] = await sql`
-      INSERT INTO channels (organization_id, name, description, is_private, created_by)
-      VALUES (${req.auth.organizationId}, ${input.name}, ${input.description}, ${input.isPrivate}, ${req.auth.userId})
-      RETURNING *
-    `;
     const initialMemberIds = [...new Set([req.auth.userId, ...input.memberIds])];
-    await sql`
-      INSERT INTO channel_members (channel_id, user_id)
-      SELECT ${channel.id}, member_id FROM unnest(${initialMemberIds}::uuid[]) AS member_id
-      ON CONFLICT DO NOTHING
+    const [channel] = await sql`
+      WITH actor AS (
+        SELECT role FROM users
+        WHERE id = ${req.auth.userId} AND organization_id = ${req.auth.organizationId}
+      ),
+      created_channel AS (
+        INSERT INTO channels (organization_id, name, description, is_private, created_by)
+        SELECT ${req.auth.organizationId}, ${input.name}, ${input.description}, ${input.isPrivate}, ${req.auth.userId}
+        FROM actor
+        WHERE actor.role = ANY(${[...groupRoles]}::text[])
+        RETURNING *
+      ),
+      added_members AS (
+        INSERT INTO channel_members (channel_id, user_id)
+        SELECT created_channel.id, member_id
+        FROM created_channel
+        CROSS JOIN unnest(${initialMemberIds}::uuid[]) AS member_id
+        ON CONFLICT DO NOTHING
+        RETURNING channel_id
+      )
+      SELECT * FROM created_channel
     `;
+    if (!channel) return res.status(403).json({ error: "Your role does not have permission to create groups" });
     invalidateCache("channel-memberships:", "socket-memberships:");
     res.status(201).json(channel);
   } catch (error) {

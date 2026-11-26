@@ -26,6 +26,9 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   }), [people, query, department, employmentStatus]);
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canManageEmployment = ["hr", "senior_leader"].includes(user.role);
+  const canEditEmployee = (person) => canInvite
+    && !(user.role === "manager" && ["hr", "senior_leader"].includes(person.role))
+    && !(user.role === "hr" && person.role === "senior_leader");
   const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
 
   useEscapeKey(() => {
@@ -134,7 +137,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
             {menuId === person.id && <div className={`person-menu${viewMode === "list" && menuOpensUp ? " opens-up" : ""}`} ref={personMenuRef}>
               {(person.employment_status || "active") === "active" && person.id !== user.id && <button onClick={() => { onStartChat(person); setMenuId(null); }}><MessageSquareText size={15} /> Start conversation</button>}
               {person.email && <button onClick={() => copyEmail(person)}><Copy size={15} /> Copy email</button>}
-              {canInvite && <button onClick={() => { onManage(person); setMenuId(null); }}><Pencil size={15} /> Edit employee details</button>}
+              {canEditEmployee(person) && <button onClick={() => { onManage(person); setMenuId(null); }}><Pencil size={15} /> Edit employee details</button>}
               {canManageEmployment && person.id !== user.id && (person.employment_status || "active") === "active" && <>
                 <button onClick={() => setPendingAction({ person, status: "offboarded" })}><UserMinus size={15} /> Offboard employee</button>
                 <button className="danger" onClick={() => setPendingAction({ person, status: "deleted" })}><UserX size={15} /> Delete employee</button>

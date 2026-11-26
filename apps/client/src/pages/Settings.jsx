@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
@@ -38,7 +38,7 @@ function appIsInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
-export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
+export function Settings({ user, people, employeeToEditId, onEmployeeEditHandled, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -197,7 +197,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
     finally { setBusy(false); }
   }
 
-  function startEditing(person) {
+  const startEditing = useCallback((person) => {
     setEditing({
       fullName: person.full_name || "",
       employeeId: person.employee_id || "",
@@ -211,7 +211,24 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
       joinedAt: person.joined_at ? String(person.joined_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
       bio: person.bio || ""
     });
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!employeeToEditId) return;
+    const person = people.find((item) => item.id === employeeToEditId);
+    onEmployeeEditHandled?.(null);
+    if (!person) {
+      onToast("Employee could not be found.");
+      return;
+    }
+    if (!canEditEmployee(person)) {
+      onToast("You do not have permission to edit this employee.");
+      return;
+    }
+    setTab("employees");
+    setSelected(person);
+    startEditing(person);
+  }, [employeeToEditId, people, user.role, canInvite, onEmployeeEditHandled, onToast, startEditing]);
 
   async function updateEmployee(event) {
     event.preventDefault();

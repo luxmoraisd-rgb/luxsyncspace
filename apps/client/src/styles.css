@@ -310,6 +310,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .chat-sidebar-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 12px; scrollbar-width: thin; scrollbar-color: #9faabd #eef1f5; }
 .chat-sidebar-scroll::-webkit-scrollbar { width: 8px; }.chat-sidebar-scroll::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #9faabd; background-clip: padding-box; }.chat-sidebar-scroll::-webkit-scrollbar-track { background: #eef1f5; }
 .chat-nav, .channels, .direct-list { display: grid; padding: 0 10px; }
+.channels { max-height: 144px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #9faabd #eef1f5; }
+.channels::-webkit-scrollbar { width: 6px; }.channels::-webkit-scrollbar-thumb { border-radius: 6px; background: #9faabd; }.channels::-webkit-scrollbar-track { background: #eef1f5; }
 .chat-nav button, .channels button, .direct-list button { border: 0; background: transparent; height: 36px; border-radius: 7px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: #58657a; font-size: 11px; text-align: left; }
 .chat-nav button:hover, .channels button:hover, .direct-list button:hover { background: #f0f2f6; }
 .chat-nav b, .channels b { margin-left: auto; min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; border-radius: 9px; background: #e9eef8; color: var(--blue); font-size: 8px; }
@@ -369,7 +371,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .message-mention { color: #2457c5; background: #eaf0ff; border-radius: 3px; font-weight: 700; }
 .message-see-more { display: block; margin-top: 4px; padding: 0; border: 0; color: var(--blue); background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .message-see-more:hover { text-decoration: underline; }
-.message-hover-actions { position: absolute; z-index: 5; top: -39px; right: 7px; padding: 4px 6px; border: 1px solid #e1e6ee; border-radius: 10px; background: white; box-shadow: 0 5px 14px rgba(20,34,58,.12); display: flex; align-items: center; gap: 2px; opacity: 0; visibility: hidden; transition: opacity .12s ease, visibility .12s ease; }
+.message-hover-actions { position: absolute; z-index: 5; top: -39px; left: 0; right: auto; padding: 4px 6px; border: 1px solid #e1e6ee; border-radius: 10px; background: white; box-shadow: 0 5px 14px rgba(20,34,58,.12); display: flex; align-items: center; gap: 2px; opacity: 0; visibility: hidden; transition: opacity .12s ease, visibility .12s ease; }
+.message-hover-actions.align-mine { left: auto; right: 7px; }
 .chat-message:hover .message-hover-actions, .chat-message:focus-within .message-hover-actions { opacity: 1; visibility: visible; }
 .message-hover-controls { display: flex; align-items: center; gap: 2px; }
 .message-hover-actions.is-expanded { z-index: 30; width: max-content; min-width: 210px; max-width: calc(100vw - 24px); padding: 4px; display: flex; flex-direction: column; align-items: stretch; gap: 0; border-radius: 12px; }
@@ -383,12 +386,14 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .message-actions-menu button:hover, .message-actions-menu button:focus-visible { color: var(--blue); background: var(--blue-soft); outline: none; }
 .message-actions-menu .danger-menu-item { color: #b43d4d; }.message-actions-menu .danger-menu-item:hover { color: #a42f40; background: #fff0f2; }
 @keyframes messageActionsReveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.message-reaction-picker { position: absolute; z-index: 31; top: -42px; right: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 22px; background: white; box-shadow: 0 12px 30px rgba(20,34,58,.18); display: flex; align-items: center; gap: 2px; }
+.message-reaction-picker { position: absolute; z-index: 31; top: -42px; left: 0; right: auto; padding: 4px 6px; border: 1px solid var(--line); border-radius: 22px; background: white; box-shadow: 0 12px 30px rgba(20,34,58,.18); display: flex; align-items: center; gap: 2px; }
+.message-reaction-picker.align-mine { left: auto; right: 0; }
 .message-reaction-picker .reaction-picker-quick-bar { display: flex; align-items: center; gap: 2px; }
 .message-reaction-picker button.reaction-quick-btn { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: 16px; display: grid; place-items: center; cursor: pointer; transition: transform 0.12s ease; }
 .message-reaction-picker button.reaction-quick-btn:hover { background: var(--blue-soft); transform: scale(1.18); }
 .message-reaction-picker .reaction-more-toggle { color: #64748b; border-left: 1px solid #e2e8f0 !important; border-radius: 0 50% 50% 0 !important; margin-left: 2px; }
-.reaction-full-picker-wrap { position: absolute; top: calc(100% + 8px); right: 0; z-index: 35; box-shadow: 0 16px 36px rgba(20, 34, 58, 0.22); border-radius: 12px; overflow: hidden; }
+.reaction-full-picker-wrap { position: absolute; top: calc(100% + 8px); left: 0; z-index: 35; box-shadow: 0 16px 36px rgba(20, 34, 58, 0.22); border-radius: 12px; overflow: hidden; }
+.message-reaction-picker.align-mine .reaction-full-picker-wrap { left: auto; right: 0; }
 .message-reply-preview { margin: 4px 0 6px; padding: 7px 9px; border-left: 3px solid var(--blue); border-radius: 5px; background: rgba(226,235,252,.72); display: grid; gap: 2px; }
 .message-reply-preview b { color: var(--blue); font-size: 9px; }.message-reply-preview span { max-width: 300px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #637086; font-size: 9px; }
 .forwarded-label { margin: 1px 0 4px; color: #7b8798; display: flex; align-items: center; gap: 4px; font-size: 8px; font-style: italic; }
@@ -721,6 +726,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .group-members-modal .event-form { min-height: 0; overflow-y: auto; overflow-x: hidden !important; }
 .group-members-field { display: grid; gap: 8px; }
 .group-members-label { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; }
+.group-members-selection { display: flex; align-items: center; gap: 10px; }
 .group-members-label button { border: 0; padding: 2px 0; background: transparent; color: var(--blue); font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
 .group-members-label button:hover:not(:disabled) { text-decoration: underline; }
 .group-members-label button:disabled { color: var(--muted); cursor: default; }
@@ -1020,7 +1026,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .chat-message.mine { margin-left: 0; display: flex; justify-content: flex-end; }
   .chat-message.mine > .avatar { display: none; }
   .chat-message.mine header b { display: none; }
-  .message-hover-actions { top: -36px; right: 6px; padding: 2px; opacity: 1; visibility: visible; transform: none; }
+  .message-hover-actions, .message-hover-actions.align-mine { top: -36px; left: auto; right: 6px; padding: 2px; opacity: 1; visibility: visible; transform: none; }
   .message-hover-controls > button { flex-basis: 25px; width: 25px; height: 25px; }
   .message-actions-menu { padding-top: 8px; }
   .message-actions-menu button { min-height: 36px; padding: 0 10px; font-size: 12px; }

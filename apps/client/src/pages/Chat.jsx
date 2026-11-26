@@ -57,7 +57,7 @@ function formatGroupCreatedDate(value) {
   return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" }).format(date);
 }
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onSelectConversation, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onChannelCreated, onRefresh, onToast, initialChannelId, initialPersonId, onSelectConversation, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const appliedInitialChannelRef = useRef(channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
@@ -923,7 +923,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   async function submitGroup(group) {
     try {
       const channel = await api("/channels", { method: "POST", body: JSON.stringify(group) });
-      await onRefresh();
+      onChannelCreated?.(channel);
       setCreateGroup(false);
       openChannel(channel.id);
       onToast("Group created successfully");
@@ -1087,7 +1087,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                     </div>}
                     {!item.pending && <div
                       ref={messageMenuId === item.id ? messageMenuRef : null}
-                      className={`message-hover-actions ${messageMenuId === item.id ? "is-expanded" : ""}`}
+                      className={`message-hover-actions ${mine ? "align-mine" : ""} ${messageMenuId === item.id ? "is-expanded" : ""}`}
                       role="group"
                       aria-label="Message actions"
                       style={messageMenuId === item.id && messageMenuPosition?.id === item.id ? {

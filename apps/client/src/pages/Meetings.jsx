@@ -165,7 +165,17 @@ function InstantMeeting({ people, onStart, onClose }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const filtered = people.filter((person) => `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
+  const allFilteredSelected = filtered.length > 0 && filtered.every((person) => attendeeIds.includes(person.id));
   const toggle = (id) => setAttendeeIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  function toggleFilteredPeople() {
+    const filteredIds = new Set(filtered.map((person) => person.id));
+    setAttendeeIds((current) => {
+      const allSelected = filteredIds.size > 0 && [...filteredIds].every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !filteredIds.has(id))
+        : [...new Set([...current, ...filteredIds])];
+    });
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -179,7 +189,15 @@ function InstantMeeting({ people, onStart, onClose }) {
       <label><span>Meeting title</span><input value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
       <div className="meeting-mode-select"><button type="button" className={mode === "video" ? "active" : ""} onClick={() => setMode("video")}><Video size={17} /><span><b>Video meeting</b><small>Camera and microphone</small></span></button><button type="button" className={mode === "audio" ? "active" : ""} onClick={() => setMode("audio")}><Mic size={17} /><span><b>Voice meeting</b><small>Microphone only</small></span></button></div>
       <div className="group-members-field">
-        <div className="group-members-label"><span>Share with employees</span><small>{attendeeIds.length} selected</small></div>
+        <div className="group-members-label">
+          <span>Share with employees</span>
+          <div className="group-members-selection">
+            <button type="button" onClick={toggleFilteredPeople} disabled={!filtered.length}>
+              {allFilteredSelected ? "Deselect all" : "Select all"}
+            </button>
+            <small>{attendeeIds.length} selected</small>
+          </div>
+        </div>
         <label className="group-member-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" /></label>
         <div className="group-member-list meeting-attendee-list">{filtered.map((person) => {
           const selected = attendeeIds.includes(person.id);
