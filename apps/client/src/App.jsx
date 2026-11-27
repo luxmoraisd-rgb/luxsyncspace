@@ -30,6 +30,7 @@ export default function App() {
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [employeeToEditId, setEmployeeToEditId] = useState(null);
+  const [settingsInitialTab, setSettingsInitialTab] = useState(null);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
   const [sessionError, setSessionError] = useState("");
   const [newEvent, setNewEvent] = useState(false);
@@ -528,8 +529,8 @@ export default function App() {
         {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} directConversationTimes={data.directConversationTimes || {}} onConversationRead={markConversationRead} onChannelCreated={addCreatedChannel} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onSelectConversation={handleChatSelect} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
-        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={(person) => { setEmployeeToEditId(person.id); navigate("settings"); }} onRefresh={refreshWorkspace} onToast={setToast} />}
-        {active === "settings" && <Settings user={user} people={data.workforce || data.people} employeeToEditId={employeeToEditId} onEmployeeEditHandled={setEmployeeToEditId} onToast={setToast} onRefresh={refreshWorkspace} onEmployeeUpdate={updateEmployee} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
+        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => { setSettingsInitialTab("invite"); navigate("settings"); }} onManage={(person) => { setEmployeeToEditId(person.id); navigate("settings"); }} onRefresh={refreshWorkspace} onToast={setToast} />}
+        {active === "settings" && <Settings user={user} people={data.workforce || data.people} initialTab={settingsInitialTab} onInitialTabHandled={() => setSettingsInitialTab(null)} employeeToEditId={employeeToEditId} onEmployeeEditHandled={setEmployeeToEditId} onToast={setToast} onRefresh={refreshWorkspace} onEmployeeUpdate={updateEmployee} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
         {active === "change-password" && <ChangePassword user={user} onBack={() => navigate("settings")} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "change-password", "help"].includes(active) && <Home {...pageProps} />}

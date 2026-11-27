@@ -184,7 +184,7 @@ function InstantMeeting({ people, onStart, onClose }) {
     finally { setBusy(false); }
   }
 
-  return <Modal title="New instant meeting" subtitle="Select employees and share the room immediately" onClose={onClose}>
+  return <Modal title="New instant meeting" subtitle="Select employees and share the room immediately" onClose={onClose} closeOnBackdrop={false}>
     <form className="event-form" onSubmit={submit}>
       <label><span>Meeting title</span><input value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
       <div className="meeting-mode-select"><button type="button" className={mode === "video" ? "active" : ""} onClick={() => setMode("video")}><Video size={17} /><span><b>Video meeting</b><small>Camera and microphone</small></span></button><button type="button" className={mode === "audio" ? "active" : ""} onClick={() => setMode("audio")}><Mic size={17} /><span><b>Voice meeting</b><small>Microphone only</small></span></button></div>

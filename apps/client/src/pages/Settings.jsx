@@ -38,8 +38,8 @@ function appIsInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
-export function Settings({ user, people, employeeToEditId, onEmployeeEditHandled, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
-  const [tab, setTab] = useState("profile");
+export function Settings({ user, people, initialTab, onInitialTabHandled, employeeToEditId, onEmployeeEditHandled, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
+  const [tab, setTab] = useState(initialTab || "profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
@@ -65,6 +65,10 @@ export function Settings({ user, people, employeeToEditId, onEmployeeEditHandled
     (person.employment_status || "active") !== "deleted"
     && `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase())
   );
+
+  useEffect(() => {
+    if (initialTab) onInitialTabHandled?.();
+  }, [initialTab, onInitialTabHandled]);
 
   useEffect(() => {
     const available = () => setInstallAvailable(true);
